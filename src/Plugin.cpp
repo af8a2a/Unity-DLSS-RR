@@ -1,4 +1,5 @@
 #include "Plugin.h"
+#include "DLSSPlugin.h"
 #pragma comment(lib, "dxgi")
 #pragma comment(lib, "d3d12")
 
@@ -19,7 +20,7 @@
 static IUnityInterfaces *g_unityInterfaces = nullptr;
 static IUnityGraphics *g_unityGraphics = nullptr;
 static std::atomic<UnityGfxRenderer> g_renderer{kUnityGfxRendererNull};
-static IUnityGraphicsD3D12v8 *g_unityGraphics_D3D12 = nullptr;
+IUnityGraphicsD3D12v8 *g_unityGraphics_D3D12 = nullptr;  // Non-static for DLSS access
 
 
 extern "C" {
@@ -32,8 +33,12 @@ static void HandleDeviceEvent(UnityGfxDeviceEventType eventType) {
             if (g_unityGraphics) {
                 g_renderer = g_unityGraphics->GetRenderer();
             }
+            // Note: DLSS_Initialize() is called explicitly from C# after device init
+            // to allow passing app-specific parameters (appId, projectId, etc.)
             break;
         case kUnityGfxDeviceEventShutdown:
+            // Shutdown DLSS before device is destroyed
+            DLSS_Shutdown();
             g_renderer = kUnityGfxRendererNull;
             break;
         case kUnityGfxDeviceEventBeforeReset:

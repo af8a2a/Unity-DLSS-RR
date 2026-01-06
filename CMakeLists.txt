@@ -23,10 +23,15 @@ set(DLSS_LIB_DIR_REL ${DLSS_LIB_DIR}/Rel)
 add_library(UnityPlugin SHARED
         src/Plugin.h
         src/Plugin.cpp
+        src/DLSSPlugin.h
+        src/DLSSPlugin.cpp
+        src/DLSSContext.h
+        src/DLSSContext.cpp
 )
 
 target_include_directories(UnityPlugin
         PRIVATE
+        ${CMAKE_SOURCE_DIR}/src
         ${PLUGIN_API_DIR}
         ${DLSS_INCLUDE_DIR}
 )

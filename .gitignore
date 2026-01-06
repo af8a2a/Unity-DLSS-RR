@@ -1,0 +1,7 @@
+/build
+/.vscode
+/.idea
+/.vscode
+/.vs
+/External/NVIDIA-DLSS
+*.idx

@@ -4,7 +4,9 @@
       "Bash(cat:*)",
       "Bash(git config:*)",
       "Bash(tree:*)",
-      "Bash(cmake --build:*)"
+      "Bash(cmake --build:*)",
+      "Bash(dir:*)",
+      "Bash(wc:*)"
     ]
   }
 }

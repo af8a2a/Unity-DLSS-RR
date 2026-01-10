@@ -674,6 +674,98 @@ bool shouldReset = Vector3.Distance(camera.transform.position, _lastPosition) > 
 
 ---
 
+## Logging
+
+The DLSS plugin provides comprehensive logging to help debug integration issues and monitor operations.
+
+### Enable Logging
+
+```csharp
+public class DLSSInitializer
+{
+    [RuntimeInitializeOnLoadMethod(RuntimeInitializeLoadType.BeforeSceneLoad)]
+    static void Initialize()
+    {
+        // Enable native plugin logging (forwards to Unity Console)
+        DLSSManager.EnableLogging(DLSSLogLevel.Info);
+
+        // Initialize DLSS
+        if (!DLSSManager.Initialize())
+        {
+            Debug.LogError("DLSS initialization failed!");
+        }
+    }
+}
+```
+
+### Log Levels
+
+| Level | Description | Use When |
+|-------|-------------|----------|
+| `Debug` | Verbose trace information | Debugging plugin internals |
+| `Info` | Important operations (init, context creation) | Production (default) |
+| `Warning` | Non-fatal issues | Production |
+| `Error` | Fatal errors | Always enabled |
+
+### Custom Log Callback
+
+If you need more control over log output:
+
+```csharp
+DLSSManager.SetCustomLogCallback((level, message) =>
+{
+    switch (level)
+    {
+        case DLSSLogLevel.Error:
+            // Log to file or analytics
+            MyLogger.Error($"DLSS: {message}");
+            break;
+        case DLSSLogLevel.Info:
+            MyLogger.Info($"DLSS: {message}");
+            break;
+    }
+});
+```
+
+### Example Log Output
+
+When initialized with `DLSSLogLevel.Info`, you'll see:
+
+```
+[DLSS] Initializing DLSS plugin (appId=0, projectId=my-project, engineVersion=2023.2)
+[DLSS] Initializing NGX SDK...
+[DLSS] NGX SDK initialized, querying capabilities...
+[DLSS] NGX feature availability queried - SR: 1, RR: 1
+[DLSS] DLSS initialized successfully - SR: available, RR: available
+[DLSS] Creating DLSS context (viewId=12345, mode=SR, quality=Balanced, input=1920x1080, output=3840x2160)
+[DLSS] DLSS context created successfully for viewId 12345
+```
+
+With `DLSSLogLevel.Debug`, you'll also see:
+
+```
+[DLSS] Executing DLSS for viewId 12345 (mode=SR, reset=0)
+[DLSS] DLSSContext::Create - Creating DLSS-SR feature handle...
+```
+
+### Disable Logging
+
+```csharp
+DLSSManager.DisableLogging();
+```
+
+### Change Log Level at Runtime
+
+```csharp
+// Reduce logging verbosity
+DLSSManager.SetLogLevel(DLSSLogLevel.Warning);
+
+// Enable verbose logging for debugging
+DLSSManager.SetLogLevel(DLSSLogLevel.Debug);
+```
+
+---
+
 ## Troubleshooting
 
 ### Common Issues

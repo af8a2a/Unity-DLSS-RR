@@ -12,8 +12,97 @@
 #include <nvsdk_ngx_helpers.h>
 #include <nvsdk_ngx_helpers_dlssd.h>
 
+#include <cstdio>
+#include <cstring>
+
 namespace dlss
 {
+
+//------------------------------------------------------------------------------
+// DLSSLogger Implementation
+//------------------------------------------------------------------------------
+
+DLSSLogger& DLSSLogger::Instance()
+{
+    static DLSSLogger instance;
+    return instance;
+}
+
+void DLSSLogger::SetCallback(DLSSLogCallback callback)
+{
+    std::lock_guard<std::mutex> lock(m_mutex);
+    m_callback = callback;
+}
+
+void DLSSLogger::SetLogLevel(DLSSLogLevel level)
+{
+    m_logLevel.store(level);
+}
+
+DLSSLogLevel DLSSLogger::GetLogLevel() const
+{
+    return m_logLevel.load();
+}
+
+void DLSSLogger::Debug(const char* format, ...)
+{
+    va_list args;
+    va_start(args, format);
+    LogV(DLSS_Log_Debug, format, args);
+    va_end(args);
+}
+
+void DLSSLogger::Info(const char* format, ...)
+{
+    va_list args;
+    va_start(args, format);
+    LogV(DLSS_Log_Info, format, args);
+    va_end(args);
+}
+
+void DLSSLogger::Warning(const char* format, ...)
+{
+    va_list args;
+    va_start(args, format);
+    LogV(DLSS_Log_Warning, format, args);
+    va_end(args);
+}
+
+void DLSSLogger::Error(const char* format, ...)
+{
+    va_list args;
+    va_start(args, format);
+    LogV(DLSS_Log_Error, format, args);
+    va_end(args);
+}
+
+void DLSSLogger::Log(DLSSLogLevel level, const char* format, ...)
+{
+    va_list args;
+    va_start(args, format);
+    LogV(level, format, args);
+    va_end(args);
+}
+
+void DLSSLogger::LogV(DLSSLogLevel level, const char* format, va_list args)
+{
+    // Check log level
+    if (level < m_logLevel.load())
+        return;
+
+    std::lock_guard<std::mutex> lock(m_mutex);
+
+    // Check if callback is set
+    if (!m_callback)
+        return;
+
+    // Format message
+    vsnprintf(m_buffer, sizeof(m_buffer) - 1, format, args);
+    m_buffer[sizeof(m_buffer) - 1] = '\0';
+
+    // Call callback
+    m_callback(level, m_buffer);
+}
 
 //------------------------------------------------------------------------------
 // Helper function implementations
@@ -162,6 +251,7 @@ DLSSResult DLSSContext::Create(
 
     if (m_handle)
     {
+        DLSS_LOG_DEBUG("DLSSContext::Create - destroying existing handle before recreating");
         Destroy();
     }
 
@@ -169,6 +259,7 @@ DLSSResult DLSSContext::Create(
     NVSDK_NGX_Parameter* ngxParams = mgr.GetNGXParams();
     if (!ngxParams)
     {
+        DLSS_LOG_ERROR("DLSSContext::Create - NGX parameters not available");
         return DLSS_Result_Fail_NotInitialized;
     }
 
@@ -176,6 +267,8 @@ DLSSResult DLSSContext::Create(
 
     if (params.mode == DLSS_Mode_RayReconstruction)
     {
+        DLSS_LOG_DEBUG("Creating DLSS-RR feature handle...");
+
         // Create DLSS-RR (Ray Reconstruction) feature
         NVSDK_NGX_DLSSD_Create_Params createParams = {};
         createParams.InWidth = params.inputResolution.width;
@@ -512,24 +605,38 @@ DLSSResult DLSSContextManager::Initialize(
 {
     if (m_initialized.load())
     {
+        DLSS_LOG_DEBUG("DLSS already initialized, skipping");
         return DLSS_Result_Success;
     }
 
     if (!device)
     {
+        DLSS_LOG_ERROR("DLSS Initialize failed: device is null");
         return DLSS_Result_Fail_InvalidParameter;
     }
+
+    DLSS_LOG_INFO("Initializing DLSS plugin (appId=%llu, projectId=%s, engineVersion=%s)",
+        appId,
+        projectId ? projectId : "(null)",
+        engineVersion ? engineVersion : "(null)");
 
     m_device = device;
 
     DLSSResult result = InitializeNGX(appId, projectId, engineVersion, logPath);
     if (result != DLSS_Result_Success)
     {
+        DLSS_LOG_ERROR("DLSS NGX initialization failed: %s (NGX error: 0x%08X)",
+            GetResultString(result), m_lastNGXError.load());
         m_device.Reset();
         return result;
     }
 
     m_initialized.store(true);
+
+    DLSS_LOG_INFO("DLSS initialized successfully - SR: %s, RR: %s",
+        m_dlssSRAvailable ? "available" : "unavailable",
+        m_dlssRRAvailable ? "available" : "unavailable");
+
     return DLSS_Result_Success;
 }
 
@@ -539,6 +646,8 @@ DLSSResult DLSSContextManager::InitializeNGX(
     const char* engineVersion,
     const wchar_t* logPath)
 {
+    DLSS_LOG_DEBUG("Initializing NGX SDK...");
+
     // Setup application identifier
     NVSDK_NGX_Application_Identifier appIdentifier = {};
 
@@ -569,13 +678,17 @@ DLSSResult DLSSContextManager::InitializeNGX(
 
     if (NVSDK_NGX_FAILED(ngxResult))
     {
+        DLSS_LOG_ERROR("NGX D3D12 Init failed with error 0x%08X", ngxResult);
         return TranslateNGXResult(ngxResult);
     }
+
+    DLSS_LOG_DEBUG("NGX SDK initialized, querying capabilities...");
 
     // Get capability parameters
     ngxResult = NVSDK_NGX_D3D12_GetCapabilityParameters(&m_ngxParams);
     if (NVSDK_NGX_FAILED(ngxResult))
     {
+        DLSS_LOG_ERROR("Failed to get NGX capability parameters: 0x%08X", ngxResult);
         NVSDK_NGX_D3D12_Shutdown1(m_device.Get());
         m_lastNGXError = ngxResult;
         return TranslateNGXResult(ngxResult);
@@ -590,6 +703,8 @@ DLSSResult DLSSContextManager::InitializeNGX(
     m_dlssSRAvailable = (dlssSRAvailable != 0);
     m_dlssRRAvailable = (dlssRRAvailable != 0);
 
+    DLSS_LOG_DEBUG("NGX feature availability queried - SR: %d, RR: %d", dlssSRAvailable, dlssRRAvailable);
+
     return DLSS_Result_Success;
 }
 
@@ -600,7 +715,15 @@ void DLSSContextManager::Shutdown()
         return;
     }
 
+    DLSS_LOG_INFO("Shutting down DLSS plugin");
+
+    size_t contextCount = m_contexts.size();
     DestroyAllContexts();
+
+    if (contextCount > 0)
+    {
+        DLSS_LOG_INFO("Destroyed %zu DLSS context(s) during shutdown", contextCount);
+    }
 
     if (m_ngxParams)
     {
@@ -616,6 +739,8 @@ void DLSSContextManager::Shutdown()
 
     m_dlssSRAvailable = false;
     m_dlssRRAvailable = false;
+
+    DLSS_LOG_INFO("DLSS plugin shutdown complete");
 }
 
 DLSSResult DLSSContextManager::GetCapabilities(DLSSCapabilityInfo* outInfo)
@@ -759,6 +884,7 @@ DLSSResult DLSSContextManager::CreateContext(uint32_t viewId, const DLSSContextC
 {
     if (!m_initialized.load())
     {
+        DLSS_LOG_ERROR("CreateContext failed: DLSS not initialized");
         return DLSS_Result_Fail_NotInitialized;
     }
 
@@ -766,8 +892,27 @@ DLSSResult DLSSContextManager::CreateContext(uint32_t viewId, const DLSSContextC
 
     if (m_contexts.find(viewId) != m_contexts.end())
     {
+        DLSS_LOG_WARN("CreateContext failed: context already exists for viewId %u", viewId);
         return DLSS_Result_Fail_ContextAlreadyExists;
     }
+
+    const char* modeStr = (params.mode == DLSS_Mode_RayReconstruction) ? "RR" : "SR";
+    const char* qualityStr = "";
+    switch (params.quality)
+    {
+    case DLSS_Quality_DLAA: qualityStr = "DLAA"; break;
+    case DLSS_Quality_UltraQuality: qualityStr = "UltraQuality"; break;
+    case DLSS_Quality_MaxQuality: qualityStr = "Quality"; break;
+    case DLSS_Quality_Balanced: qualityStr = "Balanced"; break;
+    case DLSS_Quality_MaxPerformance: qualityStr = "Performance"; break;
+    case DLSS_Quality_UltraPerformance: qualityStr = "UltraPerformance"; break;
+    default: qualityStr = "Unknown"; break;
+    }
+
+    DLSS_LOG_INFO("Creating DLSS context (viewId=%u, mode=%s, quality=%s, input=%ux%u, output=%ux%u)",
+        viewId, modeStr, qualityStr,
+        params.inputResolution.width, params.inputResolution.height,
+        params.outputResolution.width, params.outputResolution.height);
 
     // We need a command list for creating the feature
     // For now, create a temporary one (in practice, caller should provide)
@@ -779,6 +924,7 @@ DLSSResult DLSSContextManager::CreateContext(uint32_t viewId, const DLSSContextC
         IID_PPV_ARGS(&cmdAllocator));
     if (FAILED(hr))
     {
+        DLSS_LOG_ERROR("Failed to create D3D12 command allocator: HRESULT 0x%08X", hr);
         return DLSS_Result_Fail_PlatformError;
     }
 
@@ -790,6 +936,7 @@ DLSSResult DLSSContextManager::CreateContext(uint32_t viewId, const DLSSContextC
         IID_PPV_ARGS(&cmdList));
     if (FAILED(hr))
     {
+        DLSS_LOG_ERROR("Failed to create D3D12 command list: HRESULT 0x%08X", hr);
         return DLSS_Result_Fail_PlatformError;
     }
 
@@ -800,10 +947,14 @@ DLSSResult DLSSContextManager::CreateContext(uint32_t viewId, const DLSSContextC
 
     if (result != DLSS_Result_Success)
     {
+        DLSS_LOG_ERROR("Failed to create DLSS context for viewId %u: %s", viewId, GetResultString(result));
         return result;
     }
 
     m_contexts[viewId] = std::move(context);
+
+    DLSS_LOG_INFO("DLSS context created successfully for viewId %u", viewId);
+
     return DLSS_Result_Success;
 }
 
@@ -814,8 +965,11 @@ DLSSResult DLSSContextManager::DestroyContext(uint32_t viewId)
     auto it = m_contexts.find(viewId);
     if (it == m_contexts.end())
     {
+        DLSS_LOG_DEBUG("DestroyContext: no context found for viewId %u (already destroyed)", viewId);
         return DLSS_Result_Success; // Not an error to destroy non-existent context
     }
+
+    DLSS_LOG_INFO("Destroying DLSS context for viewId %u", viewId);
 
     m_contexts.erase(it);
     return DLSS_Result_Success;
@@ -840,13 +994,17 @@ DLSSResult DLSSContextManager::UpdateContext(uint32_t viewId, const DLSSContextC
     auto it = m_contexts.find(viewId);
     if (it == m_contexts.end())
     {
+        DLSS_LOG_ERROR("UpdateContext failed: context not found for viewId %u", viewId);
         return DLSS_Result_Fail_ContextNotFound;
     }
 
     if (!it->second->NeedsRecreation(params))
     {
+        DLSS_LOG_DEBUG("UpdateContext: no recreation needed for viewId %u", viewId);
         return DLSS_Result_Success;
     }
+
+    DLSS_LOG_INFO("UpdateContext: recreating context for viewId %u due to parameter changes", viewId);
 
     // Need to recreate - remove old context first
     m_contexts.erase(it);
@@ -866,11 +1024,13 @@ DLSSResult DLSSContextManager::Execute(
 {
     if (!m_initialized.load())
     {
+        DLSS_LOG_ERROR("Execute failed: DLSS not initialized");
         return DLSS_Result_Fail_NotInitialized;
     }
 
     if (!cmdList)
     {
+        DLSS_LOG_ERROR("Execute failed: command list is null");
         return DLSS_Result_Fail_InvalidParameter;
     }
 
@@ -879,10 +1039,23 @@ DLSSResult DLSSContextManager::Execute(
     auto it = m_contexts.find(viewId);
     if (it == m_contexts.end())
     {
+        DLSS_LOG_ERROR("Execute failed: context not found for viewId %u", viewId);
         return DLSS_Result_Fail_ContextNotFound;
     }
 
-    return it->second->Execute(cmdList, params);
+    DLSS_LOG_DEBUG("Executing DLSS for viewId %u (mode=%s, reset=%d)",
+        viewId,
+        params.mode == DLSS_Mode_RayReconstruction ? "RR" : "SR",
+        params.common.reset);
+
+    DLSSResult result = it->second->Execute(cmdList, params);
+
+    if (result != DLSS_Result_Success)
+    {
+        DLSS_LOG_ERROR("Execute failed for viewId %u: %s", viewId, GetResultString(result));
+    }
+
+    return result;
 }
 
 void DLSSContextManager::SetExecuteParams(const DLSSExecuteParams& params)

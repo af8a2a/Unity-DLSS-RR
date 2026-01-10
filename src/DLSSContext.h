@@ -16,6 +16,7 @@
 #include <memory>
 #include <atomic>
 #include <string>
+#include <cstdarg>
 
 // Forward declarations for NGX types
 struct NVSDK_NGX_Handle;
@@ -27,6 +28,46 @@ namespace dlss
 
 // Forward declaration
 class DLSSContextManager;
+
+//------------------------------------------------------------------------------
+// DLSSLogger - Logging system with callback support
+//------------------------------------------------------------------------------
+class DLSSLogger
+{
+public:
+    static DLSSLogger& Instance();
+
+    // Set callback for log messages
+    void SetCallback(DLSSLogCallback callback);
+
+    // Set minimum log level
+    void SetLogLevel(DLSSLogLevel level);
+    DLSSLogLevel GetLogLevel() const;
+
+    // Logging methods
+    void Debug(const char* format, ...);
+    void Info(const char* format, ...);
+    void Warning(const char* format, ...);
+    void Error(const char* format, ...);
+
+    // Generic log with level
+    void Log(DLSSLogLevel level, const char* format, ...);
+    void LogV(DLSSLogLevel level, const char* format, va_list args);
+
+private:
+    DLSSLogger() = default;
+
+    DLSSLogCallback m_callback = nullptr;
+    std::atomic<DLSSLogLevel> m_logLevel{DLSS_Log_Info};
+    std::mutex m_mutex;
+    char m_buffer[2048];
+};
+
+// Convenience macros for logging
+#define DLSS_LOG_DEBUG(fmt, ...) dlss::DLSSLogger::Instance().Debug(fmt, ##__VA_ARGS__)
+#define DLSS_LOG_INFO(fmt, ...)  dlss::DLSSLogger::Instance().Info(fmt, ##__VA_ARGS__)
+#define DLSS_LOG_WARN(fmt, ...)  dlss::DLSSLogger::Instance().Warning(fmt, ##__VA_ARGS__)
+#define DLSS_LOG_ERROR(fmt, ...) dlss::DLSSLogger::Instance().Error(fmt, ##__VA_ARGS__)
 
 //------------------------------------------------------------------------------
 // DLSSContext - Wrapper for a single NGX DLSS feature handle

@@ -494,6 +494,35 @@ DLSS_PLUGIN_API int32_t DLSS_PLUGIN_CALL DLSS_GetLastNGXError(void);
 /// @return Static string describing the error.
 DLSS_PLUGIN_API const char* DLSS_PLUGIN_CALL DLSS_GetResultString(DLSSResult result);
 
+//--- Logging ---
+
+/// Log level enumeration.
+typedef enum DLSSLogLevel
+{
+    DLSS_Log_Debug = 0,     // Verbose debug information
+    DLSS_Log_Info = 1,      // Informational messages
+    DLSS_Log_Warning = 2,   // Warning messages
+    DLSS_Log_Error = 3      // Error messages
+} DLSSLogLevel;
+
+/// Callback function type for logging.
+/// @param level Log level.
+/// @param message Log message (null-terminated).
+typedef void (DLSS_PLUGIN_CALL *DLSSLogCallback)(DLSSLogLevel level, const char* message);
+
+/// Register a callback function to receive log messages from the plugin.
+/// @param callback Callback function pointer, or NULL to disable logging.
+DLSS_PLUGIN_API void DLSS_PLUGIN_CALL DLSS_SetLogCallback(DLSSLogCallback callback);
+
+/// Set the minimum log level for callback invocation.
+/// Messages below this level will not trigger the callback.
+/// @param level Minimum log level (default: DLSS_Log_Info).
+DLSS_PLUGIN_API void DLSS_PLUGIN_CALL DLSS_SetLogLevel(DLSSLogLevel level);
+
+/// Get the current log level.
+/// @return Current minimum log level.
+DLSS_PLUGIN_API DLSSLogLevel DLSS_PLUGIN_CALL DLSS_GetLogLevel(void);
+
 #ifdef __cplusplus
 }
 #endif

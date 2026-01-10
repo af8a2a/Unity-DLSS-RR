@@ -126,6 +126,17 @@ namespace DLSS
     //--------------------------------------------------------------------------
 
     /// <summary>
+    /// Log level enumeration matching native plugin.
+    /// </summary>
+    public enum DLSSLogLevel : int
+    {
+        Debug = 0,
+        Info = 1,
+        Warning = 2,
+        Error = 3
+    }
+
+    /// <summary>
     /// Common resolution/dimension parameters.
     /// </summary>
     [StructLayout(LayoutKind.Sequential)]
@@ -666,6 +677,23 @@ namespace DLSS
         [return: MarshalAs(UnmanagedType.LPStr)]
         public static extern string DLSS_GetResultString(DLSSResult result);
 
+        //--- Logging ---
+
+        /// <summary>
+        /// Delegate for native log callback.
+        /// </summary>
+        [UnmanagedFunctionPointer(CALLING_CONVENTION)]
+        public delegate void DLSSLogCallback(DLSSLogLevel level, [MarshalAs(UnmanagedType.LPStr)] string message);
+
+        [DllImport(DLL_NAME, CallingConvention = CALLING_CONVENTION)]
+        public static extern void DLSS_SetLogCallback(DLSSLogCallback callback);
+
+        [DllImport(DLL_NAME, CallingConvention = CALLING_CONVENTION)]
+        public static extern void DLSS_SetLogLevel(DLSSLogLevel level);
+
+        [DllImport(DLL_NAME, CallingConvention = CALLING_CONVENTION)]
+        public static extern DLSSLogLevel DLSS_GetLogLevel();
+
         /// <summary>
         /// Render event ID for DLSS: 'DLSS' = 0x444C5353
         /// </summary>
@@ -858,6 +886,84 @@ namespace DLSS
         public static int GetLastNGXError()
         {
             return DLSSNative.DLSS_GetLastNGXError();
+        }
+
+        //--- Logging ---
+
+        private static DLSSNative.DLSSLogCallback s_LogCallback;
+
+        /// <summary>
+        /// Enable native plugin logging with Unity Debug.Log integration.
+        /// </summary>
+        /// <param name="minLevel">Minimum log level to forward to Unity.</param>
+        public static void EnableLogging(DLSSLogLevel minLevel = DLSSLogLevel.Info)
+        {
+            // Keep reference to prevent GC
+            s_LogCallback = OnNativeLog;
+            DLSSNative.DLSS_SetLogCallback(s_LogCallback);
+            DLSSNative.DLSS_SetLogLevel(minLevel);
+        }
+
+        /// <summary>
+        /// Disable native plugin logging.
+        /// </summary>
+        public static void DisableLogging()
+        {
+            DLSSNative.DLSS_SetLogCallback(null);
+            s_LogCallback = null;
+        }
+
+        /// <summary>
+        /// Set the minimum log level for native plugin logging.
+        /// </summary>
+        public static void SetLogLevel(DLSSLogLevel level)
+        {
+            DLSSNative.DLSS_SetLogLevel(level);
+        }
+
+        /// <summary>
+        /// Get the current log level.
+        /// </summary>
+        public static DLSSLogLevel GetLogLevel()
+        {
+            return DLSSNative.DLSS_GetLogLevel();
+        }
+
+        /// <summary>
+        /// Set a custom log callback for native plugin logging.
+        /// </summary>
+        /// <param name="callback">Custom callback, or null to disable.</param>
+        public static void SetCustomLogCallback(System.Action<DLSSLogLevel, string> callback)
+        {
+            if (callback != null)
+            {
+                s_LogCallback = (level, message) => callback(level, message);
+                DLSSNative.DLSS_SetLogCallback(s_LogCallback);
+            }
+            else
+            {
+                DLSSNative.DLSS_SetLogCallback(null);
+                s_LogCallback = null;
+            }
+        }
+
+        private static void OnNativeLog(DLSSLogLevel level, string message)
+        {
+            switch (level)
+            {
+                case DLSSLogLevel.Debug:
+                    Debug.Log($"[DLSS] {message}");
+                    break;
+                case DLSSLogLevel.Info:
+                    Debug.Log($"[DLSS] {message}");
+                    break;
+                case DLSSLogLevel.Warning:
+                    Debug.LogWarning($"[DLSS] {message}");
+                    break;
+                case DLSSLogLevel.Error:
+                    Debug.LogError($"[DLSS] {message}");
+                    break;
+            }
         }
     }
 }

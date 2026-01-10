@@ -255,3 +255,22 @@ DLSS_PLUGIN_API const char* DLSS_PLUGIN_CALL DLSS_GetResultString(DLSSResult res
 {
     return dlss::GetResultString(result);
 }
+
+//------------------------------------------------------------------------------
+// Logging
+//------------------------------------------------------------------------------
+
+DLSS_PLUGIN_API void DLSS_PLUGIN_CALL DLSS_SetLogCallback(DLSSLogCallback callback)
+{
+    dlss::DLSSLogger::Instance().SetCallback(callback);
+}
+
+DLSS_PLUGIN_API void DLSS_PLUGIN_CALL DLSS_SetLogLevel(DLSSLogLevel level)
+{
+    dlss::DLSSLogger::Instance().SetLogLevel(level);
+}
+
+DLSS_PLUGIN_API DLSSLogLevel DLSS_PLUGIN_CALL DLSS_GetLogLevel(void)
+{
+    return dlss::DLSSLogger::Instance().GetLogLevel();
+}

@@ -1100,25 +1100,142 @@ void DLSSContextManager::SetExecuteParams(const DLSSExecuteParams& params)
 
 DLSSResult DLSSContextManager::TranslateNGXResult(int ngxResult)
 {
+    // Success case - no logging needed
+    if (ngxResult == NVSDK_NGX_Result_Success)
+    {
+        return DLSS_Result_Success;
+    }
+
+    // Map NGX error codes to DLSSResult with detailed logging
+    DLSSResult result;
+    const char* errorDesc = nullptr;
+    const char* suggestion = nullptr;
+
     switch (ngxResult)
     {
-    case NVSDK_NGX_Result_Success:
-        return DLSS_Result_Success;
     case NVSDK_NGX_Result_FAIL_FeatureNotSupported:
-        return DLSS_Result_Fail_FeatureNotSupported;
-    case NVSDK_NGX_Result_FAIL_InvalidParameter:
-        return DLSS_Result_Fail_InvalidParameter;
-    case NVSDK_NGX_Result_FAIL_OutOfGPUMemory:
-        return DLSS_Result_Fail_OutOfMemory;
-    case NVSDK_NGX_Result_FAIL_NotInitialized:
-        return DLSS_Result_Fail_NotInitialized;
-    case NVSDK_NGX_Result_FAIL_OutOfDate:
-        return DLSS_Result_Fail_DriverOutOfDate;
+        result = DLSS_Result_Fail_FeatureNotSupported;
+        errorDesc = "Feature not supported";
+        suggestion = "Check GPU compatibility (requires NVIDIA RTX) and driver version";
+        break;
+
     case NVSDK_NGX_Result_FAIL_PlatformError:
-        return DLSS_Result_Fail_PlatformError;
+        result = DLSS_Result_Fail_PlatformError;
+        errorDesc = "Platform error";
+        suggestion = "Ensure D3D12 device is valid and properly initialized";
+        break;
+
+    case NVSDK_NGX_Result_FAIL_FeatureAlreadyExists:
+        result = DLSS_Result_Fail_ContextAlreadyExists;
+        errorDesc = "Feature already exists";
+        suggestion = "Destroy existing context before creating a new one with same ID";
+        break;
+
+    case NVSDK_NGX_Result_FAIL_FeatureNotFound:
+        result = DLSS_Result_Fail_ContextNotFound;
+        errorDesc = "Feature not found";
+        suggestion = "Ensure context was created before executing";
+        break;
+
+    case NVSDK_NGX_Result_FAIL_InvalidParameter:
+        result = DLSS_Result_Fail_InvalidParameter;
+        errorDesc = "Invalid parameter";
+        suggestion = "Check input textures, resolutions, and parameter values";
+        break;
+
+    case NVSDK_NGX_Result_FAIL_ScratchBufferTooSmall:
+        result = DLSS_Result_Fail_InvalidParameter;
+        errorDesc = "Scratch buffer too small";
+        suggestion = "Internal buffer allocation issue - try recreating context";
+        break;
+
+    case NVSDK_NGX_Result_FAIL_NotInitialized:
+        result = DLSS_Result_Fail_NotInitialized;
+        errorDesc = "NGX not initialized";
+        suggestion = "Call DLSS_Initialize() before using DLSS features";
+        break;
+
+    case NVSDK_NGX_Result_FAIL_UnsupportedInputFormat:
+        result = DLSS_Result_Fail_InvalidParameter;
+        errorDesc = "Unsupported input format";
+        suggestion = "Check texture formats - DLSS requires specific formats (e.g., RGBA16F for color)";
+        break;
+
+    case NVSDK_NGX_Result_FAIL_RWFlagMissing:
+        result = DLSS_Result_Fail_InvalidParameter;
+        errorDesc = "Read/Write flag missing on resource";
+        suggestion = "Ensure output texture has UAV (unordered access) flag enabled";
+        break;
+
+    case NVSDK_NGX_Result_FAIL_MissingInput:
+        result = DLSS_Result_Fail_InvalidParameter;
+        errorDesc = "Required input missing";
+        suggestion = "Provide all required textures (color, depth, motion vectors, output)";
+        break;
+
+    case NVSDK_NGX_Result_FAIL_UnableToInitializeFeature:
+        result = DLSS_Result_Fail_NGXError;
+        errorDesc = "Unable to initialize feature";
+        suggestion = "DLSS model files may be missing or corrupted - reinstall DLSS DLLs";
+        break;
+
+    case NVSDK_NGX_Result_FAIL_OutOfDate:
+        result = DLSS_Result_Fail_DriverOutOfDate;
+        errorDesc = "Driver or SDK out of date";
+        suggestion = "Update NVIDIA driver to latest version (minimum 531.0 for SR, 545.0 for RR)";
+        break;
+
+    case NVSDK_NGX_Result_FAIL_OutOfGPUMemory:
+        result = DLSS_Result_Fail_OutOfMemory;
+        errorDesc = "Out of GPU memory";
+        suggestion = "Reduce resolution, quality preset, or free GPU memory";
+        break;
+
+    case NVSDK_NGX_Result_FAIL_UnsupportedFormat:
+        result = DLSS_Result_Fail_InvalidParameter;
+        errorDesc = "Unsupported texture format";
+        suggestion = "Use compatible formats: RGBA16F/RGBA32F for color, R32F/D32F for depth";
+        break;
+
+    case NVSDK_NGX_Result_FAIL_UnableToWriteToAppDataPath:
+        result = DLSS_Result_Fail_PlatformError;
+        errorDesc = "Unable to write to app data path";
+        suggestion = "Check write permissions for DLSS log/cache directory";
+        break;
+
+    case NVSDK_NGX_Result_FAIL_UnsupportedParameter:
+        result = DLSS_Result_Fail_InvalidParameter;
+        errorDesc = "Unsupported parameter value";
+        suggestion = "Check quality preset, feature flags, and mode settings";
+        break;
+
+    case NVSDK_NGX_Result_FAIL_Denied:
+        result = DLSS_Result_Fail_FeatureNotSupported;
+        errorDesc = "Feature access denied";
+        suggestion = "DLSS may be disabled by driver settings or application profile";
+        break;
+
+    case NVSDK_NGX_Result_FAIL_NotImplemented:
+        result = DLSS_Result_Fail_FeatureNotSupported;
+        errorDesc = "Feature not implemented";
+        suggestion = "This feature may not be available in current SDK/driver version";
+        break;
+
     default:
-        return DLSS_Result_Fail_NGXError;
+        result = DLSS_Result_Fail_NGXError;
+        errorDesc = "Unknown NGX error";
+        suggestion = "Check NGX error code for details";
+        break;
     }
+
+    // Log the detailed error information
+    DLSS_LOG_ERROR("NGX Error 0x%08X: %s", ngxResult, errorDesc);
+    if (suggestion)
+    {
+        DLSS_LOG_ERROR("  Suggestion: %s", suggestion);
+    }
+
+    return result;
 }
 
 } // namespace dlss

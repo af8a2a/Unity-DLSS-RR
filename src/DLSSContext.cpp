@@ -473,6 +473,36 @@ int DLSSContext::SetupAndExecuteSR(
     NVSDK_NGX_Parameter* ngxParams,
     const DLSSExecuteParams& params)
 {
+    // Validate required resources for SR
+    bool hasError = false;
+
+    if (!params.textures.colorInput)
+    {
+        DLSS_LOG_ERROR("SetupAndExecuteSR: colorInput texture is null (required)");
+        hasError = true;
+    }
+    if (!params.textures.colorOutput)
+    {
+        DLSS_LOG_ERROR("SetupAndExecuteSR: colorOutput texture is null (required)");
+        hasError = true;
+    }
+    if (!params.textures.depth)
+    {
+        DLSS_LOG_ERROR("SetupAndExecuteSR: depth texture is null (required)");
+        hasError = true;
+    }
+    if (!params.textures.motionVectors)
+    {
+        DLSS_LOG_ERROR("SetupAndExecuteSR: motionVectors texture is null (required)");
+        hasError = true;
+    }
+
+    if (hasError)
+    {
+        DLSS_LOG_ERROR("SetupAndExecuteSR: One or more required resources are missing");
+        return NVSDK_NGX_Result_FAIL_MissingInput;
+    }
+
     NVSDK_NGX_D3D12_DLSS_Eval_Params evalParams = {};
 
     // Common textures
@@ -517,6 +547,71 @@ int DLSSContext::SetupAndExecuteRR(
     NVSDK_NGX_Parameter* ngxParams,
     const DLSSExecuteParams& params)
 {
+    // Validate required resources for RR
+    bool hasError = false;
+
+    // Common required textures
+    if (!params.textures.colorInput)
+    {
+        DLSS_LOG_ERROR("SetupAndExecuteRR: colorInput texture is null (required)");
+        hasError = true;
+    }
+    if (!params.textures.colorOutput)
+    {
+        DLSS_LOG_ERROR("SetupAndExecuteRR: colorOutput texture is null (required)");
+        hasError = true;
+    }
+    if (!params.textures.depth)
+    {
+        DLSS_LOG_ERROR("SetupAndExecuteRR: depth texture is null (required)");
+        hasError = true;
+    }
+    if (!params.textures.motionVectors)
+    {
+        DLSS_LOG_ERROR("SetupAndExecuteRR: motionVectors texture is null (required)");
+        hasError = true;
+    }
+
+    // GBuffer required textures
+    if (!params.rrParams.gbuffer.diffuseAlbedo)
+    {
+        DLSS_LOG_ERROR("SetupAndExecuteRR: diffuseAlbedo texture is null (required for RR)");
+        hasError = true;
+    }
+    if (!params.rrParams.gbuffer.specularAlbedo)
+    {
+        DLSS_LOG_ERROR("SetupAndExecuteRR: specularAlbedo texture is null (required for RR)");
+        hasError = true;
+    }
+    if (!params.rrParams.gbuffer.normals)
+    {
+        DLSS_LOG_ERROR("SetupAndExecuteRR: normals texture is null (required for RR)");
+        hasError = true;
+    }
+
+    // Ray textures - need either separate direction+distance OR combined
+    bool hasDiffuseRays = (params.rrParams.rays.diffuseRayDirection && params.rrParams.rays.diffuseHitDistance) ||
+                          params.rrParams.rays.diffuseRayDirectionHitDistance;
+    bool hasSpecularRays = (params.rrParams.rays.specularRayDirection && params.rrParams.rays.specularHitDistance) ||
+                           params.rrParams.rays.specularRayDirectionHitDistance;
+
+    if (!hasDiffuseRays)
+    {
+        DLSS_LOG_ERROR("SetupAndExecuteRR: diffuse ray data is missing (need either diffuseRayDirection+diffuseHitDistance OR diffuseRayDirectionHitDistance)");
+        hasError = true;
+    }
+    if (!hasSpecularRays)
+    {
+        DLSS_LOG_ERROR("SetupAndExecuteRR: specular ray data is missing (need either specularRayDirection+specularHitDistance OR specularRayDirectionHitDistance)");
+        hasError = true;
+    }
+
+    if (hasError)
+    {
+        DLSS_LOG_ERROR("SetupAndExecuteRR: One or more required resources are missing");
+        return NVSDK_NGX_Result_FAIL_MissingInput;
+    }
+
     NVSDK_NGX_D3D12_DLSSD_Eval_Params evalParams = {};
 
     // Common textures

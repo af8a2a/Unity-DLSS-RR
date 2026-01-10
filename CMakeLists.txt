@@ -40,25 +40,29 @@ target_include_directories(UnityDLSS
 if (EXISTS ${DLSS_LIB_DIR})
     target_link_directories(UnityDLSS PRIVATE ${DLSS_LIB_DIR})
 
-    # Link against NGX SDK library (nvsdk_ngx_d.lib for dynamic linking)
-    if (CMAKE_BUILD_TYPE STREQUAL "Debug" OR CMAKE_CONFIGURATION_TYPES)
-        set(NGX_LIB_PATH "${DLSS_LIB_DIR}/nvsdk_ngx_d_dbg.lib")
-    else ()
-        set(NGX_LIB_PATH "${DLSS_LIB_DIR}/nvsdk_ngx_d.lib")
-    endif ()
-    
-    if (EXISTS ${NGX_LIB_PATH})
-        target_link_libraries(UnityDLSS PRIVATE ${NGX_LIB_PATH})
-        message(STATUS "Linked against NGX SDK library: ${NGX_LIB_PATH}")
-    else()
-        message(FATAL_ERROR 
+    # NGX SDK library paths
+    set(NGX_LIB_PATH_DEBUG "${DLSS_LIB_DIR}/nvsdk_ngx_d_dbg.lib")
+    set(NGX_LIB_PATH_RELEASE "${DLSS_LIB_DIR}/nvsdk_ngx_d.lib")
+
+    # Check that libraries exist
+    if (NOT EXISTS ${NGX_LIB_PATH_RELEASE})
+        message(FATAL_ERROR
             "NGX SDK library not found!\n"
-            "  Expected: ${NGX_LIB_PATH}\n"
+            "  Expected: ${NGX_LIB_PATH_RELEASE}\n"
             "  \n"
             "  Please run fetch_dlss.ps1 to download the DLSS SDK including the NGX SDK library.\n"
             "  The library file (nvsdk_ngx_d.lib) should be in: ${DLSS_LIB_DIR}"
         )
     endif()
+
+    # Link against appropriate library based on configuration (use generator expressions for multi-config)
+    target_link_libraries(UnityDLSS PRIVATE
+        $<$<CONFIG:Debug>:${NGX_LIB_PATH_DEBUG}>
+        $<$<NOT:$<CONFIG:Debug>>:${NGX_LIB_PATH_RELEASE}>
+    )
+    message(STATUS "NGX SDK libraries configured:")
+    message(STATUS "  Debug: ${NGX_LIB_PATH_DEBUG}")
+    message(STATUS "  Release: ${NGX_LIB_PATH_RELEASE}")
 endif()
 
 
@@ -75,45 +79,49 @@ if (WIN32)
     # Check if DLSS is available
     if (EXISTS ${DLSS_INCLUDE_DIR} AND EXISTS ${DLSS_LIB_DIR})
         message(STATUS "DLSS SDK found at: ${DLSS_DIR}")
-        
-        # Determine which DLL directory to use based on build type
-        # Debug builds use Dev DLLs, Release builds use Rel DLLs
-        if (CMAKE_BUILD_TYPE STREQUAL "Debug" OR CMAKE_CONFIGURATION_TYPES)
-            # Debug build - use Dev DLLs
-            set(DLSS_DLL_SOURCE_DIR ${DLSS_LIB_DIR_DEV})
-            set(DLSS_BUILD_TYPE "Debug (Dev)")
-        else()
-            # Release build - use Rel DLLs
-            set(DLSS_DLL_SOURCE_DIR ${DLSS_LIB_DIR_REL})
-            set(DLSS_BUILD_TYPE "Release (Rel)")
-        endif()
-        
-        message(STATUS "Using DLSS DLLs from: ${DLSS_DLL_SOURCE_DIR} (${DLSS_BUILD_TYPE})")
-        
-        # Find and copy DLSS DLL files from the appropriate directory
-        file(GLOB DLSS_DLLS "${DLSS_DLL_SOURCE_DIR}/*.dll")
-        if (DLSS_DLLS)
-            # Add DLL directory to PATH for runtime (so NGX SDK can find the DLLs)
-            # This sets the PATH environment variable for the target
+
+        # For multi-config generators (like Visual Studio), use generator expressions
+        # to copy the appropriate DLLs based on build configuration
+        # Find all DLLs in both directories
+        file(GLOB DLSS_DLLS_DEV "${DLSS_LIB_DIR_DEV}/*.dll")
+        file(GLOB DLSS_DLLS_REL "${DLSS_LIB_DIR_REL}/*.dll")
+
+        if (DLSS_DLLS_DEV OR DLSS_DLLS_REL)
+            # Add DLL directories to PATH for runtime
             set_target_properties(UnityDLSS PROPERTIES
-                VS_DEBUGGER_ENVIRONMENT "PATH=${DLSS_DLL_SOURCE_DIR};$ENV{PATH}"
+                VS_DEBUGGER_ENVIRONMENT "PATH=${DLSS_LIB_DIR_DEV};${DLSS_LIB_DIR_REL};$ENV{PATH}"
             )
-            
-            # Copy DLLs to output directory (so they're next to UnityDLSS.dll)
-            foreach(DLL ${DLSS_DLLS})
+
+            # Copy Release DLLs for Release/RelWithDebInfo/MinSizeRel configurations
+            foreach(DLL ${DLSS_DLLS_REL})
                 get_filename_component(DLL_NAME ${DLL} NAME)
                 add_custom_command(TARGET UnityDLSS POST_BUILD
-                    COMMAND ${CMAKE_COMMAND} -E copy_if_different
-                    ${DLL}
-                    $<TARGET_FILE_DIR:UnityDLSS>
-                    COMMENT "Copying ${DLL_NAME} (${DLSS_BUILD_TYPE}) to output directory"
+                    COMMAND ${CMAKE_COMMAND} -E
+                        $<IF:$<CONFIG:Debug>,true,copy_if_different>
+                        ${DLL}
+                        $<TARGET_FILE_DIR:UnityDLSS>
+                    COMMENT "Copying ${DLL_NAME} (Release) to output directory"
                 )
-                message(STATUS "  Found DLSS DLL: ${DLL_NAME}")
+                message(STATUS "  Found DLSS DLL (Release): ${DLL_NAME}")
             endforeach()
-            message(STATUS "DLSS DLLs (${DLSS_BUILD_TYPE}) will be copied to output directory: ${CMAKE_BINARY_DIR}/bin")
+
+            # Copy Dev DLLs for Debug configuration
+            foreach(DLL ${DLSS_DLLS_DEV})
+                get_filename_component(DLL_NAME ${DLL} NAME)
+                add_custom_command(TARGET UnityDLSS POST_BUILD
+                    COMMAND ${CMAKE_COMMAND} -E
+                        $<IF:$<CONFIG:Debug>,copy_if_different,true>
+                        ${DLL}
+                        $<TARGET_FILE_DIR:UnityDLSS>
+                    COMMENT "Copying ${DLL_NAME} (Dev) to output directory"
+                )
+                message(STATUS "  Found DLSS DLL (Dev): ${DLL_NAME}")
+            endforeach()
+
+            message(STATUS "DLSS DLLs will be copied to output directory based on configuration")
         else()
-            message(WARNING "DLSS DLLs not found in ${DLSS_DLL_SOURCE_DIR}")
-            message(STATUS "  Expected DLLs: nvngx_dlss.dll, nvngx_dlssd.dll, nvngx_dlssg.dll")
+            message(WARNING "DLSS DLLs not found")
+            message(STATUS "  Expected DLLs in: ${DLSS_LIB_DIR_DEV} or ${DLSS_LIB_DIR_REL}")
             message(STATUS "  Please run fetch_dlss.ps1 to download the DLLs")
         endif()
     else()

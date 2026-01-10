@@ -6,7 +6,8 @@
       "Bash(tree:*)",
       "Bash(cmake --build:*)",
       "Bash(dir:*)",
-      "Bash(wc:*)"
+      "Bash(wc:*)",
+      "Bash(cmake:*)"
     ]
   }
 }

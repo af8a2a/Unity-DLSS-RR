@@ -676,60 +676,66 @@ bool shouldReset = Vector3.Distance(camera.transform.position, _lastPosition) > 
 
 ## Logging
 
-The DLSS plugin provides comprehensive logging to help debug integration issues and monitor operations.
+The DLSS plugin provides comprehensive logging via Unity's native `IUnityLog` interface. **Logging is automatic** - no setup required!
 
-### Enable Logging
+### Automatic Unity Console Logging
 
-```csharp
-public class DLSSInitializer
-{
-    [RuntimeInitializeOnLoadMethod(RuntimeInitializeLoadType.BeforeSceneLoad)]
-    static void Initialize()
-    {
-        // Enable native plugin logging (forwards to Unity Console)
-        DLSSManager.EnableLogging(DLSSLogLevel.Info);
+By default, all DLSS log messages at `Info` level and above are automatically output to Unity Console:
 
-        // Initialize DLSS
-        if (!DLSSManager.Initialize())
-        {
-            Debug.LogError("DLSS initialization failed!");
-        }
-    }
-}
+```
+[DLSS] Initializing DLSS plugin (appId=0, projectId=my-project, engineVersion=2023.2)
+[DLSS] DLSS initialized successfully - SR: available, RR: available
+[DLSS] Creating DLSS context (viewId=12345, mode=SR, quality=Balanced, input=1920x1080, output=3840x2160)
+[DLSS] DLSS context created successfully for viewId 12345
 ```
 
 ### Log Levels
 
-| Level | Description | Use When |
-|-------|-------------|----------|
-| `Debug` | Verbose trace information | Debugging plugin internals |
-| `Info` | Important operations (init, context creation) | Production (default) |
-| `Warning` | Non-fatal issues | Production |
-| `Error` | Fatal errors | Always enabled |
+| Level | Description | Default |
+|-------|-------------|---------|
+| `Debug` | Verbose trace information | Not shown |
+| `Info` | Important operations (init, context creation) | **Shown** |
+| `Warning` | Non-fatal issues | **Shown** |
+| `Error` | Fatal errors | **Shown** |
 
-### Custom Log Callback
-
-If you need more control over log output:
+### Change Log Level
 
 ```csharp
+// Show all logs including Debug
+DLSSManager.SetLogLevel(DLSSLogLevel.Debug);
+
+// Only show warnings and errors
+DLSSManager.SetLogLevel(DLSSLogLevel.Warning);
+
+// Get current level
+var level = DLSSManager.GetLogLevel();
+```
+
+### Custom Log Callback (Advanced)
+
+If you need custom log handling (e.g., file logging, analytics), you can override the default Unity logging:
+
+```csharp
+// Override default Unity Console logging
 DLSSManager.SetCustomLogCallback((level, message) =>
 {
-    switch (level)
+    // Send to your custom logging system
+    MyLogger.Write($"{level}: {message}");
+
+    // Or filter specific messages
+    if (level == DLSSLogLevel.Error)
     {
-        case DLSSLogLevel.Error:
-            // Log to file or analytics
-            MyLogger.Error($"DLSS: {message}");
-            break;
-        case DLSSLogLevel.Info:
-            MyLogger.Info($"DLSS: {message}");
-            break;
+        Analytics.LogError(message);
     }
 });
+
+// Restore default Unity Console logging
+DLSSManager.ResetLoggingToDefault();
 ```
 
 ### Example Log Output
 
-When initialized with `DLSSLogLevel.Info`, you'll see:
+With `DLSSLogLevel.Info` (default):
 
 ```
 [DLSS] Initializing DLSS plugin (appId=0, projectId=my-project, engineVersion=2023.2)
@@ -741,27 +747,11 @@ When initialized with `DLSSLogLevel.Info`, you'll see:
 [DLSS] DLSS context created successfully for viewId 12345
 ```
 
-With `DLSSLogLevel.Debug`, you'll also see:
+With `DLSSLogLevel.Debug`:
 
 ```
 [DLSS] Executing DLSS for viewId 12345 (mode=SR, reset=0)
 [DLSS] DLSSContext::Create - Creating DLSS-SR feature handle...
-```
-
-### Disable Logging
-
-```csharp
-DLSSManager.DisableLogging();
-```
-
-### Change Log Level at Runtime
-
-```csharp
-// Reduce logging verbosity
-DLSSManager.SetLogLevel(DLSSLogLevel.Warning);
-
-// Enable verbose logging for debugging
-DLSSManager.SetLogLevel(DLSSLogLevel.Debug);
 ```
 
 ---

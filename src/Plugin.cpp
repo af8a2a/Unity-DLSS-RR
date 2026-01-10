@@ -12,6 +12,7 @@
 #include "IUnityInterface.h"
 #include "IUnityGraphics.h"
 #include "IUnityGraphicsD3D12.h"
+#include "IUnityLog.h"
 
 
 
@@ -21,6 +22,8 @@ static IUnityInterfaces *g_unityInterfaces = nullptr;
 static IUnityGraphics *g_unityGraphics = nullptr;
 static std::atomic<UnityGfxRenderer> g_renderer{kUnityGfxRendererNull};
 IUnityGraphicsD3D12v8 *g_unityGraphics_D3D12 = nullptr;  // Non-static for DLSS access
+IUnityLog *g_unityLog = nullptr;  // Non-static for DLSS logging access
+
 
 
 extern "C" {
@@ -40,6 +43,7 @@ static void HandleDeviceEvent(UnityGfxDeviceEventType eventType) {
             // Shutdown DLSS before device is destroyed
             DLSS_Shutdown();
             g_renderer = kUnityGfxRendererNull;
+            g_unityLog = nullptr;
             break;
         case kUnityGfxDeviceEventBeforeReset:
         case kUnityGfxDeviceEventAfterReset:
@@ -62,6 +66,7 @@ UNITY_INTERFACE_EXPORT void UNITY_INTERFACE_API UnityPluginLoad(IUnityInterfaces
     g_unityGraphics = g_unityInterfaces->Get<IUnityGraphics>();
     g_unityGraphics->RegisterDeviceEventCallback(OnGraphicsDeviceEvent);
     g_unityGraphics_D3D12 = g_unityInterfaces->Get<IUnityGraphicsD3D12v8>();
+    g_unityLog = g_unityInterfaces->Get<IUnityLog>();
 
 
 #if SUPPORT_VULKAN

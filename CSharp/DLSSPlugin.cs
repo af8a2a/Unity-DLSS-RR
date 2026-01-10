@@ -889,33 +889,18 @@ namespace DLSS
         }
 
         //--- Logging ---
+        // Note: Logging is automatic via Unity's native IUnityLog interface.
+        // By default, all logs at Info level and above are output to Unity Console.
+        // Use SetCustomLogCallback to override the default Unity logging behavior.
 
         private static DLSSNative.DLSSLogCallback s_LogCallback;
 
         /// <summary>
-        /// Enable native plugin logging with Unity Debug.Log integration.
-        /// </summary>
-        /// <param name="minLevel">Minimum log level to forward to Unity.</param>
-        public static void EnableLogging(DLSSLogLevel minLevel = DLSSLogLevel.Info)
-        {
-            // Keep reference to prevent GC
-            s_LogCallback = OnNativeLog;
-            DLSSNative.DLSS_SetLogCallback(s_LogCallback);
-            DLSSNative.DLSS_SetLogLevel(minLevel);
-        }
-
-        /// <summary>
-        /// Disable native plugin logging.
-        /// </summary>
-        public static void DisableLogging()
-        {
-            DLSSNative.DLSS_SetLogCallback(null);
-            s_LogCallback = null;
-        }
-
-        /// <summary>
         /// Set the minimum log level for native plugin logging.
+        /// Logs are automatically output to Unity Console via native IUnityLog interface.
+        /// Default level is Info.
         /// </summary>
+        /// <param name="level">Minimum log level.</param>
         public static void SetLogLevel(DLSSLogLevel level)
         {
             DLSSNative.DLSS_SetLogLevel(level);
@@ -930,40 +915,34 @@ namespace DLSS
         }
 
         /// <summary>
-        /// Set a custom log callback for native plugin logging.
+        /// Set a custom log callback to override the default Unity logging.
+        /// When a callback is set, logs are sent to the callback instead of Unity Console.
+        /// Pass null to restore default Unity logging behavior.
         /// </summary>
-        /// <param name="callback">Custom callback, or null to disable.</param>
+        /// <param name="callback">Custom callback, or null to use Unity Console.</param>
         public static void SetCustomLogCallback(System.Action<DLSSLogLevel, string> callback)
         {
             if (callback != null)
             {
+                // Keep reference to prevent GC
                 s_LogCallback = (level, message) => callback(level, message);
                 DLSSNative.DLSS_SetLogCallback(s_LogCallback);
             }
             else
             {
+                // Clear callback to restore Unity log
                 DLSSNative.DLSS_SetLogCallback(null);
                 s_LogCallback = null;
             }
         }
 
-        private static void OnNativeLog(DLSSLogLevel level, string message)
+        /// <summary>
+        /// Clear any custom log callback and restore default Unity Console logging.
+        /// </summary>
+        public static void ResetLoggingToDefault()
         {
-            switch (level)
-            {
-                case DLSSLogLevel.Debug:
-                    Debug.Log($"[DLSS] {message}");
-                    break;
-                case DLSSLogLevel.Info:
-                    Debug.Log($"[DLSS] {message}");
-                    break;
-                case DLSSLogLevel.Warning:
-                    Debug.LogWarning($"[DLSS] {message}");
-                    break;
-                case DLSSLogLevel.Error:
-                    Debug.LogError($"[DLSS] {message}");
-                    break;
-            }
+            DLSSNative.DLSS_SetLogCallback(null);
+            s_LogCallback = null;
         }
     }
 }

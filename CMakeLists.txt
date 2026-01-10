@@ -20,7 +20,7 @@ set(DLSS_LIB_DIR_DEV ${DLSS_LIB_DIR}/Dev)
 set(DLSS_LIB_DIR_REL ${DLSS_LIB_DIR}/Rel)
 
 
-add_library(UnityPlugin SHARED
+add_library(UnityDLSS SHARED
         src/Plugin.h
         src/Plugin.cpp
         src/DLSSPlugin.h
@@ -29,7 +29,7 @@ add_library(UnityPlugin SHARED
         src/DLSSContext.cpp
 )
 
-target_include_directories(UnityPlugin
+target_include_directories(UnityDLSS
         PRIVATE
         ${CMAKE_SOURCE_DIR}/src
         ${PLUGIN_API_DIR}
@@ -38,7 +38,7 @@ target_include_directories(UnityPlugin
 
 # Add DLSS library directory to linker search path
 if (EXISTS ${DLSS_LIB_DIR})
-    target_link_directories(UnityPlugin PRIVATE ${DLSS_LIB_DIR})
+    target_link_directories(UnityDLSS PRIVATE ${DLSS_LIB_DIR})
 
     # Link against NGX SDK library (nvsdk_ngx_d.lib for dynamic linking)
     if (CMAKE_BUILD_TYPE STREQUAL "Debug" OR CMAKE_CONFIGURATION_TYPES)
@@ -48,7 +48,7 @@ if (EXISTS ${DLSS_LIB_DIR})
     endif ()
     
     if (EXISTS ${NGX_LIB_PATH})
-        target_link_libraries(UnityPlugin PRIVATE ${NGX_LIB_PATH})
+        target_link_libraries(UnityDLSS PRIVATE ${NGX_LIB_PATH})
         message(STATUS "Linked against NGX SDK library: ${NGX_LIB_PATH}")
     else()
         message(FATAL_ERROR 
@@ -65,8 +65,8 @@ endif()
 
 
 if (WIN32)
-    set_target_properties(UnityPlugin PROPERTIES
-            OUTPUT_NAME "UnityPlugin"
+    set_target_properties(UnityDLSS PROPERTIES
+            OUTPUT_NAME "UnityDLSS"
             RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/bin
             LIBRARY_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/bin
             ARCHIVE_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/lib
@@ -95,17 +95,17 @@ if (WIN32)
         if (DLSS_DLLS)
             # Add DLL directory to PATH for runtime (so NGX SDK can find the DLLs)
             # This sets the PATH environment variable for the target
-            set_target_properties(UnityPlugin PROPERTIES
+            set_target_properties(UnityDLSS PROPERTIES
                 VS_DEBUGGER_ENVIRONMENT "PATH=${DLSS_DLL_SOURCE_DIR};$ENV{PATH}"
             )
             
-            # Copy DLLs to output directory (so they're next to UnityPlugin.dll)
+            # Copy DLLs to output directory (so they're next to UnityDLSS.dll)
             foreach(DLL ${DLSS_DLLS})
                 get_filename_component(DLL_NAME ${DLL} NAME)
-                add_custom_command(TARGET UnityPlugin POST_BUILD
+                add_custom_command(TARGET UnityDLSS POST_BUILD
                     COMMAND ${CMAKE_COMMAND} -E copy_if_different
                     ${DLL}
-                    $<TARGET_FILE_DIR:UnityPlugin>
+                    $<TARGET_FILE_DIR:UnityDLSS>
                     COMMENT "Copying ${DLL_NAME} (${DLSS_BUILD_TYPE}) to output directory"
                 )
                 message(STATUS "  Found DLSS DLL: ${DLL_NAME}")

@@ -8,6 +8,7 @@
 #pragma once
 
 #include "DLSSPlugin.h"
+#include "IUnityLog.h"
 
 #include <d3d12.h>
 #include <wrl/client.h>
@@ -23,6 +24,9 @@ struct NVSDK_NGX_Handle;
 struct NVSDK_NGX_Parameter;
 // NVSDK_NGX_Result is defined in nvsdk_ngx_defs.h - use int in forward decls
 
+// External Unity log interface (defined in Plugin.cpp)
+extern IUnityLog* g_unityLog;
+
 namespace dlss
 {
 
@@ -30,14 +34,14 @@ namespace dlss
 class DLSSContextManager;
 
 //------------------------------------------------------------------------------
-// DLSSLogger - Logging system with callback support
+// DLSSLogger - Logging system with Unity Log and callback support
 //------------------------------------------------------------------------------
 class DLSSLogger
 {
 public:
     static DLSSLogger& Instance();
 
-    // Set callback for log messages
+    // Set callback for log messages (optional, overrides Unity log if set)
     void SetCallback(DLSSLogCallback callback);
 
     // Set minimum log level
@@ -56,6 +60,9 @@ public:
 
 private:
     DLSSLogger() = default;
+
+    // Output to Unity log interface
+    void LogToUnity(DLSSLogLevel level, const char* message);
 
     DLSSLogCallback m_callback = nullptr;
     std::atomic<DLSSLogLevel> m_logLevel{DLSS_Log_Info};

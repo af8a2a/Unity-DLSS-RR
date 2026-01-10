@@ -92,16 +92,50 @@ void DLSSLogger::LogV(DLSSLogLevel level, const char* format, va_list args)
 
     std::lock_guard<std::mutex> lock(m_mutex);
 
-    // Check if callback is set
-    if (!m_callback)
-        return;
+    // Format message with [DLSS] prefix
+    char prefixedBuffer[2048];
+    snprintf(prefixedBuffer, sizeof(prefixedBuffer) - 1, "[DLSS] %s", format);
+    prefixedBuffer[sizeof(prefixedBuffer) - 1] = '\0';
 
-    // Format message
-    vsnprintf(m_buffer, sizeof(m_buffer) - 1, format, args);
+    // Format final message
+    vsnprintf(m_buffer, sizeof(m_buffer) - 1, prefixedBuffer, args);
     m_buffer[sizeof(m_buffer) - 1] = '\0';
 
-    // Call callback
-    m_callback(level, m_buffer);
+    // If callback is set, use it (allows C# to override Unity log)
+    if (m_callback)
+    {
+        m_callback(level, m_buffer);
+        return;
+    }
+
+    // Otherwise, use Unity's log interface
+    LogToUnity(level, m_buffer);
+}
+
+void DLSSLogger::LogToUnity(DLSSLogLevel level, const char* message)
+{
+    if (!g_unityLog)
+        return;
+
+    UnityLogType unityLogType;
+    switch (level)
+    {
+    case DLSS_Log_Debug:
+    case DLSS_Log_Info:
+        unityLogType = kUnityLogTypeLog;
+        break;
+    case DLSS_Log_Warning:
+        unityLogType = kUnityLogTypeWarning;
+        break;
+    case DLSS_Log_Error:
+        unityLogType = kUnityLogTypeError;
+        break;
+    default:
+        unityLogType = kUnityLogTypeLog;
+        break;
+    }
+
+    g_unityLog->Log(unityLogType, message, "DLSSPlugin", 0);
 }
 
 //------------------------------------------------------------------------------

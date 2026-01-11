@@ -1,14 +1,13 @@
-#include "Plugin.h"
-#include "DLSSPlugin.h"
 #pragma comment(lib, "dxgi")
 #pragma comment(lib, "d3d12")
 
 #include <atomic>
 #include <d3d12.h>
-
 #include <dxgi.h>
 #include <dxgi1_4.h>
 #include <wrl/client.h>
+#include "Plugin.h"
+#include "DLSSPluginLite.h"
 #include "IUnityInterface.h"
 #include "IUnityGraphics.h"
 #include "IUnityGraphicsD3D12.h"
@@ -36,12 +35,12 @@ static void HandleDeviceEvent(UnityGfxDeviceEventType eventType) {
             if (g_unityGraphics) {
                 g_renderer = g_unityGraphics->GetRenderer();
             }
-            // Note: DLSS_Initialize() is called explicitly from C# after device init
-            // to allow passing app-specific parameters (appId, projectId, etc.)
+            // Note: DLSS_Init_with_ProjectID_D3D12() is called explicitly from C# after device init
+            // to allow passing app-specific parameters (projectId, engineVersion, etc.)
             break;
         case kUnityGfxDeviceEventShutdown:
-            // Shutdown DLSS before device is destroyed
-            DLSS_Shutdown();
+            // Note: DLSS_Shutdown_D3D12() is called explicitly from C# before device shutdown
+            // The lite plugin is managed entirely from C# side
             g_renderer = kUnityGfxRendererNull;
             g_unityLog = nullptr;
             break;

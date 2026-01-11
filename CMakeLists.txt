@@ -20,13 +20,12 @@ set(DLSS_LIB_DIR_DEV ${DLSS_LIB_DIR}/Dev)
 set(DLSS_LIB_DIR_REL ${DLSS_LIB_DIR}/Rel)
 
 
+# Use the lightweight DLSS plugin (thin NGX wrapper, context management in C#)
 add_library(UnityDLSS SHARED
         src/Plugin.h
         src/Plugin.cpp
-        src/DLSSPlugin.h
-        src/DLSSPlugin.cpp
-        src/DLSSContext.h
-        src/DLSSContext.cpp
+        src/DLSSPluginLite.h
+        src/DLSSPluginLite.cpp
 )
 
 target_include_directories(UnityDLSS

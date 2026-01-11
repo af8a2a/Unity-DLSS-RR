@@ -589,7 +589,7 @@ namespace DLSS
     /// </summary>
     public static class DLSSNative
     {
-        private const string DLL_NAME = "UnityPlugin";
+        private const string DLL_NAME = "UnityDLSS";
         private const CallingConvention CALLING_CONVENTION = CallingConvention.StdCall;
 
         //--- Initialization/Shutdown ---
@@ -693,6 +693,125 @@ namespace DLSS
 
         [DllImport(DLL_NAME, CallingConvention = CALLING_CONVENTION)]
         public static extern DLSSLogLevel DLSS_GetLogLevel();
+
+        //--- Low-Level NGX Parameter API ---
+        // These provide direct access to NGX SDK for maximum flexibility
+
+        public const int DLSS_INVALID_FEATURE_HANDLE = -1;
+
+        /// <summary>
+        /// Render event IDs for IssuePluginEventAndData
+        /// </summary>
+        public enum DLSSRenderEventId : int
+        {
+            CreateFeature = 0,
+            EvaluateFeature = 1,
+            DestroyFeature = 2
+        }
+
+        /// <summary>
+        /// NGX Feature types (subset relevant to DLSS)
+        /// </summary>
+        public enum DLSSNGXFeature : int
+        {
+            SuperSampling = 1,          // DLSS-SR
+            RayReconstruction = 13      // DLSS-RR
+        }
+
+        /// <summary>
+        /// Parameters for create feature render event
+        /// </summary>
+        [StructLayout(LayoutKind.Sequential)]
+        public struct DLSSCreateFeatureEventData
+        {
+            public int handle;
+            public DLSSNGXFeature feature;
+            public IntPtr parameters;   // NVSDK_NGX_Parameter*
+        }
+
+        /// <summary>
+        /// Parameters for evaluate feature render event
+        /// </summary>
+        [StructLayout(LayoutKind.Sequential)]
+        public struct DLSSEvaluateFeatureEventData
+        {
+            public int handle;
+            public IntPtr parameters;   // NVSDK_NGX_Parameter*
+        }
+
+        /// <summary>
+        /// Parameters for destroy feature render event
+        /// </summary>
+        [StructLayout(LayoutKind.Sequential)]
+        public struct DLSSDestroyFeatureEventData
+        {
+            public int handle;
+        }
+
+        // Parameter Management
+        [DllImport(DLL_NAME, CallingConvention = CALLING_CONVENTION)]
+        public static extern DLSSResult DLSS_AllocateParameters(out IntPtr outParams);
+
+        [DllImport(DLL_NAME, CallingConvention = CALLING_CONVENTION)]
+        public static extern DLSSResult DLSS_GetCapabilityParameters(out IntPtr outParams);
+
+        [DllImport(DLL_NAME, CallingConvention = CALLING_CONVENTION)]
+        public static extern DLSSResult DLSS_DestroyParameters(IntPtr param);
+
+        // Parameter Setters
+        [DllImport(DLL_NAME, CallingConvention = CALLING_CONVENTION, CharSet = CharSet.Ansi)]
+        public static extern void DLSS_Parameter_SetI(IntPtr param, string name, int value);
+
+        [DllImport(DLL_NAME, CallingConvention = CALLING_CONVENTION, CharSet = CharSet.Ansi)]
+        public static extern void DLSS_Parameter_SetUI(IntPtr param, string name, uint value);
+
+        [DllImport(DLL_NAME, CallingConvention = CALLING_CONVENTION, CharSet = CharSet.Ansi)]
+        public static extern void DLSS_Parameter_SetF(IntPtr param, string name, float value);
+
+        [DllImport(DLL_NAME, CallingConvention = CALLING_CONVENTION, CharSet = CharSet.Ansi)]
+        public static extern void DLSS_Parameter_SetD(IntPtr param, string name, double value);
+
+        [DllImport(DLL_NAME, CallingConvention = CALLING_CONVENTION, CharSet = CharSet.Ansi)]
+        public static extern void DLSS_Parameter_SetULL(IntPtr param, string name, ulong value);
+
+        [DllImport(DLL_NAME, CallingConvention = CALLING_CONVENTION, CharSet = CharSet.Ansi)]
+        public static extern void DLSS_Parameter_SetD3D12Resource(IntPtr param, string name, IntPtr resource);
+
+        [DllImport(DLL_NAME, CallingConvention = CALLING_CONVENTION, CharSet = CharSet.Ansi)]
+        public static extern void DLSS_Parameter_SetVoidPointer(IntPtr param, string name, IntPtr ptr);
+
+        // Parameter Getters
+        [DllImport(DLL_NAME, CallingConvention = CALLING_CONVENTION, CharSet = CharSet.Ansi)]
+        public static extern DLSSResult DLSS_Parameter_GetI(IntPtr param, string name, out int outValue);
+
+        [DllImport(DLL_NAME, CallingConvention = CALLING_CONVENTION, CharSet = CharSet.Ansi)]
+        public static extern DLSSResult DLSS_Parameter_GetUI(IntPtr param, string name, out uint outValue);
+
+        [DllImport(DLL_NAME, CallingConvention = CALLING_CONVENTION, CharSet = CharSet.Ansi)]
+        public static extern DLSSResult DLSS_Parameter_GetF(IntPtr param, string name, out float outValue);
+
+        [DllImport(DLL_NAME, CallingConvention = CALLING_CONVENTION, CharSet = CharSet.Ansi)]
+        public static extern DLSSResult DLSS_Parameter_GetD(IntPtr param, string name, out double outValue);
+
+        [DllImport(DLL_NAME, CallingConvention = CALLING_CONVENTION, CharSet = CharSet.Ansi)]
+        public static extern DLSSResult DLSS_Parameter_GetULL(IntPtr param, string name, out ulong outValue);
+
+        [DllImport(DLL_NAME, CallingConvention = CALLING_CONVENTION, CharSet = CharSet.Ansi)]
+        public static extern DLSSResult DLSS_Parameter_GetD3D12Resource(IntPtr param, string name, out IntPtr outResource);
+
+        [DllImport(DLL_NAME, CallingConvention = CALLING_CONVENTION, CharSet = CharSet.Ansi)]
+        public static extern DLSSResult DLSS_Parameter_GetVoidPointer(IntPtr param, string name, out IntPtr outPtr);
+
+        // Feature Handle Management
+        [DllImport(DLL_NAME, CallingConvention = CALLING_CONVENTION)]
+        public static extern int DLSS_AllocateFeatureHandle();
+
+        [DllImport(DLL_NAME, CallingConvention = CALLING_CONVENTION)]
+        public static extern int DLSS_FreeFeatureHandle(int handle);
+
+        // Render Event with Data (for IssuePluginEventAndData)
+        [DllImport(DLL_NAME, CallingConvention = CALLING_CONVENTION)]
+        public static extern IntPtr DLSS_GetRenderEventAndDataFunc();
 
         /// <summary>
         /// Render event ID for DLSS: 'DLSS' = 0x444C5353

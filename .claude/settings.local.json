@@ -7,7 +7,8 @@
       "Bash(cmake --build:*)",
       "Bash(dir:*)",
       "Bash(wc:*)",
-      "Bash(cmake:*)"
+      "Bash(cmake:*)",
+      "Bash(powershell.exe -ExecutionPolicy Bypass -File \"copy_to_unity.ps1\")"
     ]
   }
 }

@@ -5,3 +5,5 @@
 /.vs
 /External/NVIDIA-DLSS
 *.idx
+copy_to_unity.bat
+copy_to_unity.ps1

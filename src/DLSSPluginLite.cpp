@@ -142,6 +142,16 @@ static const char* GetFeatureString(NVSDK_NGX_Feature feature)
     }
 }
 
+static ID3D12Resource* GetD3D12ResourceParameter(NVSDK_NGX_Parameter* params, const char* name)
+{
+    if (!params || !name)
+        return nullptr;
+
+    ID3D12Resource* resource = nullptr;
+    NVSDK_NGX_Result result = NVSDK_NGX_Parameter_GetD3d12Resource(params, name, &resource);
+    return NVSDK_NGX_SUCCEED(result) ? resource : nullptr;
+}
+
 //------------------------------------------------------------------------------
 // NGX Log Callback
 //------------------------------------------------------------------------------
@@ -555,7 +565,21 @@ static void UNITY_INTERFACE_API OnDLSSRenderEvent(int eventId, void* data)
         }
 
         NVSDK_NGX_Handle* ngxHandle = it->second;
+        ID3D12Resource* outputResource = GetD3D12ResourceParameter(ngxParams, NVSDK_NGX_Parameter_Output);
+        if (outputResource)
+        {
+            g_unityGraphics_D3D12->RequestResourceState(outputResource, D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
+        }
+
         NVSDK_NGX_Result result = NVSDK_NGX_D3D12_EvaluateFeature(cmdList, ngxHandle, ngxParams, nullptr);
+
+        if (outputResource)
+        {
+            g_unityGraphics_D3D12->NotifyResourceState(
+                outputResource,
+                D3D12_RESOURCE_STATE_UNORDERED_ACCESS,
+                true);
+        }
 
         if (!NVSDK_NGX_SUCCEED(result))
         {

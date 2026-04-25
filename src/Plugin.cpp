@@ -29,11 +29,33 @@ extern "C" {
 // Forward declarations
 static void UNITY_INTERFACE_API OnGraphicsDeviceEvent(UnityGfxDeviceEventType eventType);
 
+static void ConfigureD3D12PluginEvent(int eventId) {
+    if (!g_unityGraphics_D3D12) {
+        return;
+    }
+
+    UnityD3D12PluginEventConfig config = {};
+    config.graphicsQueueAccess = kUnityD3D12GraphicsQueueAccess_DontCare;
+    config.flags =
+        kUnityD3D12EventConfigFlag_FlushCommandBuffers |
+        kUnityD3D12EventConfigFlag_ModifiesCommandBuffersState;
+    g_unityGraphics_D3D12->ConfigureEvent(eventId, &config);
+}
+
+static void ConfigureD3D12PluginEvents() {
+    ConfigureD3D12PluginEvent(DLSS_Event_CreateFeature);
+    ConfigureD3D12PluginEvent(DLSS_Event_EvaluateFeature);
+    ConfigureD3D12PluginEvent(DLSS_Event_DestroyFeature);
+}
+
 static void HandleDeviceEvent(UnityGfxDeviceEventType eventType) {
     switch (eventType) {
         case kUnityGfxDeviceEventInitialize:
             if (g_unityGraphics) {
                 g_renderer = g_unityGraphics->GetRenderer();
+            }
+            if (g_renderer == kUnityGfxRendererD3D12) {
+                ConfigureD3D12PluginEvents();
             }
             // Note: DLSS_Init_with_ProjectID_D3D12() is called explicitly from C# after device init
             // to allow passing app-specific parameters (projectId, engineVersion, etc.)
@@ -66,6 +88,7 @@ UNITY_INTERFACE_EXPORT void UNITY_INTERFACE_API UnityPluginLoad(IUnityInterfaces
     g_unityGraphics->RegisterDeviceEventCallback(OnGraphicsDeviceEvent);
     g_unityGraphics_D3D12 = g_unityInterfaces->Get<IUnityGraphicsD3D12v8>();
     g_unityLog = g_unityInterfaces->Get<IUnityLog>();
+    ConfigureD3D12PluginEvents();
 
 
 #if SUPPORT_VULKAN

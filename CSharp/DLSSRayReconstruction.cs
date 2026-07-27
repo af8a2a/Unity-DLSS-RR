@@ -253,12 +253,16 @@ namespace UnityEngine.Rendering.Universal
             SetupEvalParams(
                 colorInput, colorOutput, depth, motionVectors,
                 gbuffer, rayInputs,
-                worldToView, viewToClip,
                 jitterX, jitterY, mvScaleX, mvScaleY,
                 reset, frameTimeDeltaMs);
 
             // Execute
-            Extension.EvaluateFeature(cmd, m_dlssHandle, m_dlssParameters);
+            Extension.EvaluateRayReconstructionFeature(
+                cmd,
+                m_dlssHandle,
+                m_dlssParameters,
+                worldToView,
+                viewToClip);
             return true;
         }
 
@@ -363,8 +367,6 @@ namespace UnityEngine.Rendering.Universal
             RenderTexture motionVectors,
             DLSSRRGBuffer gbuffer,
             DLSSRRRayInputs rayInputs,
-            Matrix4x4 worldToView,
-            Matrix4x4 viewToClip,
             float jitterX,
             float jitterY,
             float mvScaleX,
@@ -414,10 +416,6 @@ namespace UnityEngine.Rendering.Universal
             {
                 ext.SetParameterRenderTexture(m_dlssParameters, DLSSExtension.NVSDK_NGX_Parameter_SpecularRayDirectionHitDistance, rayInputs.SpecularRayDirectionHitDistance);
             }
-
-            // Matrices (required for RR)
-            ext.SetParameterMatrix4x4(m_dlssParameters, DLSSExtension.NVSDK_NGX_Parameter_WorldToViewMatrix, worldToView);
-            ext.SetParameterMatrix4x4(m_dlssParameters, DLSSExtension.NVSDK_NGX_Parameter_ViewToClipMatrix, viewToClip);
 
             // Jitter
             ext.SetParameterF(m_dlssParameters, DLSSExtension.NVSDK_NGX_Parameter_Jitter_Offset_X, jitterX);

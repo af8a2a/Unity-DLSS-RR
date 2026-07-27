@@ -15,6 +15,7 @@
 // NGX SDK headers
 #include <nvsdk_ngx.h>
 #include <nvsdk_ngx_defs.h>
+#include <nvsdk_ngx_defs_dlssd.h>
 #include <nvsdk_ngx_params.h>
 #include "DLSSPluginLite.h"
 #include "IUnityGraphicsD3D12.h"
@@ -565,6 +566,21 @@ static void UNITY_INTERFACE_API OnDLSSRenderEvent(int eventId, void* data)
         }
 
         NVSDK_NGX_Handle* ngxHandle = it->second;
+        if (params->hasMatrices != 0)
+        {
+            // DLSS-RR expects pointers to row-major matrices under the exact NGX
+            // parameter names. The matrices live in this event payload, so their
+            // addresses remain valid for the duration of EvaluateFeature.
+            NVSDK_NGX_Parameter_SetVoidPointer(
+                ngxParams,
+                NVSDK_NGX_Parameter_DLSS_WORLD_TO_VIEW_MATRIX,
+                params->worldToView.values);
+            NVSDK_NGX_Parameter_SetVoidPointer(
+                ngxParams,
+                NVSDK_NGX_Parameter_DLSS_VIEW_TO_CLIP_MATRIX,
+                params->viewToClip.values);
+        }
+
         ID3D12Resource* outputResource = GetD3D12ResourceParameter(ngxParams, NVSDK_NGX_Parameter_Output);
         if (outputResource)
         {

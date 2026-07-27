@@ -7,6 +7,7 @@
 //------------------------------------------------------------------------------
 
 #pragma once
+#include <cstddef>
 #include <dxgi.h>
 #include <dxgi1_4.h>
 #include "IUnityGraphics.h"
@@ -78,12 +79,31 @@ typedef struct DLSSCreateFeatureParams
     void* parameters;   // NVSDK_NGX_Parameter*
 } DLSSCreateFeatureParams;
 
+/// Row-major 4x4 matrix embedded in a render event payload.
+typedef struct DLSSMatrix4x4
+{
+    float values[16];
+} DLSSMatrix4x4;
+
 /// Parameters for evaluate feature render event
 typedef struct DLSSEvaluateFeatureParams
 {
     int handle;
     void* parameters;   // NVSDK_NGX_Parameter*
+    int hasMatrices;    // Non-zero for DLSS-RR evaluation
+    DLSSMatrix4x4 worldToView;
+    DLSSMatrix4x4 viewToClip;
 } DLSSEvaluateFeatureParams;
+
+#ifdef __cplusplus
+static_assert(sizeof(DLSSMatrix4x4) == 16 * sizeof(float));
+static_assert(
+    offsetof(DLSSEvaluateFeatureParams, worldToView) ==
+    offsetof(DLSSEvaluateFeatureParams, hasMatrices) + sizeof(int));
+static_assert(
+    offsetof(DLSSEvaluateFeatureParams, viewToClip) ==
+    offsetof(DLSSEvaluateFeatureParams, worldToView) + sizeof(DLSSMatrix4x4));
+#endif
 
 /// Parameters for destroy feature render event
 typedef struct DLSSDestroyFeatureParams

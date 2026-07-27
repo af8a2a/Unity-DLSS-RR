@@ -255,11 +255,46 @@ namespace UnityEngine.Rendering.Universal
             public IntPtr parameters;
         }
 
-        [StructLayout(LayoutKind.Sequential)]
+        [StructLayout(LayoutKind.Sequential, Pack = 4)]
+        private struct DLSSMatrix4x4
+        {
+            public float m00, m01, m02, m03;
+            public float m10, m11, m12, m13;
+            public float m20, m21, m22, m23;
+            public float m30, m31, m32, m33;
+
+            public static DLSSMatrix4x4 FromRowMajor(Matrix4x4 matrix)
+            {
+                return new DLSSMatrix4x4
+                {
+                    m00 = matrix.m00,
+                    m01 = matrix.m01,
+                    m02 = matrix.m02,
+                    m03 = matrix.m03,
+                    m10 = matrix.m10,
+                    m11 = matrix.m11,
+                    m12 = matrix.m12,
+                    m13 = matrix.m13,
+                    m20 = matrix.m20,
+                    m21 = matrix.m21,
+                    m22 = matrix.m22,
+                    m23 = matrix.m23,
+                    m30 = matrix.m30,
+                    m31 = matrix.m31,
+                    m32 = matrix.m32,
+                    m33 = matrix.m33
+                };
+            }
+        }
+
+        [StructLayout(LayoutKind.Sequential, Pack = 8)]
         private struct DLSSEvaluateFeatureParams
         {
             public int handle;
             public IntPtr parameters;
+            public int hasMatrices;
+            public DLSSMatrix4x4 worldToView;
+            public DLSSMatrix4x4 viewToClip;
         }
 
         [StructLayout(LayoutKind.Sequential)]
@@ -569,6 +604,44 @@ namespace UnityEngine.Rendering.Universal
         /// </summary>
         public void EvaluateFeature(CommandBuffer cmd, int handle, IntPtr parameters)
         {
+            QueueEvaluateFeature(
+                cmd,
+                handle,
+                parameters,
+                false,
+                default,
+                default);
+        }
+
+        /// <summary>
+        /// Evaluate DLSS Ray Reconstruction with row-major camera matrices.
+        /// The matrices are copied into the render event payload and bound as
+        /// void-pointer NGX parameters on the render thread.
+        /// </summary>
+        public void EvaluateRayReconstructionFeature(
+            CommandBuffer cmd,
+            int handle,
+            IntPtr parameters,
+            Matrix4x4 worldToView,
+            Matrix4x4 viewToClip)
+        {
+            QueueEvaluateFeature(
+                cmd,
+                handle,
+                parameters,
+                true,
+                DLSSMatrix4x4.FromRowMajor(worldToView),
+                DLSSMatrix4x4.FromRowMajor(viewToClip));
+        }
+
+        private void QueueEvaluateFeature(
+            CommandBuffer cmd,
+            int handle,
+            IntPtr parameters,
+            bool hasMatrices,
+            DLSSMatrix4x4 worldToView,
+            DLSSMatrix4x4 viewToClip)
+        {
             if (!m_Initialized)
             {
                 Debug.LogError("[DLSSExtension] Cannot evaluate feature: not initialized");
@@ -578,7 +651,10 @@ namespace UnityEngine.Rendering.Universal
             var evalParams = new DLSSEvaluateFeatureParams
             {
                 handle = handle,
-                parameters = parameters
+                parameters = parameters,
+                hasMatrices = hasMatrices ? 1 : 0,
+                worldToView = worldToView,
+                viewToClip = viewToClip
             };
 
             IntPtr ptr = m_Allocator.Allocate(evalParams);
@@ -669,29 +745,6 @@ namespace UnityEngine.Rendering.Universal
 
         public void SetParameterVoidPointer(IntPtr pParams, string name, IntPtr value)
             => DLSS_Parameter_SetVoidPointer(pParams, name, value);
-
-        /// <summary>
-        /// Set a 4x4 matrix parameter.
-        /// </summary>
-        public void SetParameterMatrix4x4(IntPtr pParams, string name, Matrix4x4 matrix)
-        {
-            SetParameterF(pParams, name + "_00", matrix.m00);
-            SetParameterF(pParams, name + "_01", matrix.m01);
-            SetParameterF(pParams, name + "_02", matrix.m02);
-            SetParameterF(pParams, name + "_03", matrix.m03);
-            SetParameterF(pParams, name + "_10", matrix.m10);
-            SetParameterF(pParams, name + "_11", matrix.m11);
-            SetParameterF(pParams, name + "_12", matrix.m12);
-            SetParameterF(pParams, name + "_13", matrix.m13);
-            SetParameterF(pParams, name + "_20", matrix.m20);
-            SetParameterF(pParams, name + "_21", matrix.m21);
-            SetParameterF(pParams, name + "_22", matrix.m22);
-            SetParameterF(pParams, name + "_23", matrix.m23);
-            SetParameterF(pParams, name + "_30", matrix.m30);
-            SetParameterF(pParams, name + "_31", matrix.m31);
-            SetParameterF(pParams, name + "_32", matrix.m32);
-            SetParameterF(pParams, name + "_33", matrix.m33);
-        }
 
         #endregion
 

@@ -687,18 +687,20 @@ namespace UnityEngine.Rendering.Universal
 
         /// <summary>
         /// Queue an immutable DLSS Super Resolution evaluation snapshot.
+        /// Jitter must already be in input/render pixels and motion-vector scale
+        /// must convert the texture values to current-to-previous pixels.
         /// </summary>
-        public bool EvaluateSuperResolutionFeature(
+        internal bool EvaluateSuperResolutionFeature(
             CommandBuffer cmd,
             int handle,
             RenderTexture colorInput,
             RenderTexture colorOutput,
             RenderTexture depth,
             RenderTexture motionVectors,
-            float jitterX,
-            float jitterY,
-            float motionVectorScaleX,
-            float motionVectorScaleY,
+            float jitterRenderPixelX,
+            float jitterRenderPixelY,
+            float motionVectorToPixelScaleX,
+            float motionVectorToPixelScaleY,
             bool reset,
             uint renderSubrectWidth,
             uint renderSubrectHeight,
@@ -714,10 +716,10 @@ namespace UnityEngine.Rendering.Universal
                     colorOutput,
                     depth,
                     motionVectors,
-                    jitterX,
-                    jitterY,
-                    motionVectorScaleX,
-                    motionVectorScaleY,
+                    jitterRenderPixelX,
+                    jitterRenderPixelY,
+                    motionVectorToPixelScaleX,
+                    motionVectorToPixelScaleY,
                     reset,
                     renderSubrectWidth,
                     renderSubrectHeight,
@@ -735,8 +737,10 @@ namespace UnityEngine.Rendering.Universal
 
         /// <summary>
         /// Queue an immutable DLSS Ray Reconstruction evaluation snapshot.
+        /// Jitter must already be in input/render pixels and motion-vector scale
+        /// must convert the texture values to current-to-previous pixels.
         /// </summary>
-        public bool EvaluateRayReconstructionFeature(
+        internal bool EvaluateRayReconstructionFeature(
             CommandBuffer cmd,
             int handle,
             RenderTexture colorInput,
@@ -756,10 +760,10 @@ namespace UnityEngine.Rendering.Universal
             RenderTexture specularRayDirectionHitDistance,
             Matrix4x4 worldToView,
             Matrix4x4 viewToClip,
-            float jitterX,
-            float jitterY,
-            float motionVectorScaleX,
-            float motionVectorScaleY,
+            float jitterRenderPixelX,
+            float jitterRenderPixelY,
+            float motionVectorToPixelScaleX,
+            float motionVectorToPixelScaleY,
             bool reset,
             uint renderSubrectWidth,
             uint renderSubrectHeight,
@@ -773,10 +777,10 @@ namespace UnityEngine.Rendering.Universal
                     colorOutput,
                     depth,
                     motionVectors,
-                    jitterX,
-                    jitterY,
-                    motionVectorScaleX,
-                    motionVectorScaleY,
+                    jitterRenderPixelX,
+                    jitterRenderPixelY,
+                    motionVectorToPixelScaleX,
+                    motionVectorToPixelScaleY,
                     reset,
                     renderSubrectWidth,
                     renderSubrectHeight,
@@ -833,10 +837,10 @@ namespace UnityEngine.Rendering.Universal
             RenderTexture colorOutput,
             RenderTexture depth,
             RenderTexture motionVectors,
-            float jitterX,
-            float jitterY,
-            float motionVectorScaleX,
-            float motionVectorScaleY,
+            float jitterRenderPixelX,
+            float jitterRenderPixelY,
+            float motionVectorToPixelScaleX,
+            float motionVectorToPixelScaleY,
             bool reset,
             uint renderSubrectWidth,
             uint renderSubrectHeight,
@@ -849,10 +853,10 @@ namespace UnityEngine.Rendering.Universal
                 output = GetNativeTexturePtr(colorOutput),
                 depth = GetNativeTexturePtr(depth),
                 motionVectors = GetNativeTexturePtr(motionVectors),
-                jitterOffsetX = jitterX,
-                jitterOffsetY = jitterY,
-                motionVectorScaleX = motionVectorScaleX,
-                motionVectorScaleY = motionVectorScaleY,
+                jitterOffsetX = jitterRenderPixelX,
+                jitterOffsetY = jitterRenderPixelY,
+                motionVectorScaleX = motionVectorToPixelScaleX,
+                motionVectorScaleY = motionVectorToPixelScaleY,
                 reset = reset ? 1 : 0,
                 renderSubrectWidth = renderSubrectWidth,
                 renderSubrectHeight = renderSubrectHeight,

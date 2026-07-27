@@ -151,6 +151,163 @@ namespace UnityEngine.Rendering.Universal
     }
 
     /// <summary>
+    /// Jitter offset in the input/render pixel space required by NGX.
+    /// </summary>
+    public readonly struct DLSSJitterOffset
+    {
+        public Vector2 RenderPixels { get; }
+
+        private DLSSJitterOffset(Vector2 renderPixels)
+        {
+            RenderPixels = renderPixels;
+        }
+
+        /// <summary>
+        /// Creates an NGX jitter offset from a value that is already expressed in
+        /// input/render pixels.
+        /// </summary>
+        public static DLSSJitterOffset FromRenderPixels(Vector2 renderPixels)
+        {
+            return new DLSSJitterOffset(renderPixels);
+        }
+
+        /// <summary>
+        /// Converts the translation stored in a projection jitter matrix
+        /// (m03/m13, in NDC) to NGX input/render pixels.
+        ///
+        /// The sign change converts the current-frame projection displacement to
+        /// the current-to-previous convention required by NGX. The factor of 0.5
+        /// converts the full [-1, 1] NDC span to pixels.
+        /// </summary>
+        public static DLSSJitterOffset FromProjectionNdc(
+            Vector2 projectionOffsetNdc,
+            int renderWidth,
+            int renderHeight)
+        {
+            ValidateRenderSize(renderWidth, renderHeight);
+            return new DLSSJitterOffset(new Vector2(
+                -0.5f * projectionOffsetNdc.x * renderWidth,
+                -0.5f * projectionOffsetNdc.y * renderHeight));
+        }
+
+        public static DLSSJitterOffset FromProjectionNdc(
+            Vector2 projectionOffsetNdc,
+            Vector2Int renderSize)
+        {
+            return FromProjectionNdc(projectionOffsetNdc, renderSize.x, renderSize.y);
+        }
+
+        private static void ValidateRenderSize(int renderWidth, int renderHeight)
+        {
+            if (renderWidth <= 0)
+                throw new ArgumentOutOfRangeException(nameof(renderWidth), "Render width must be positive.");
+            if (renderHeight <= 0)
+                throw new ArgumentOutOfRangeException(nameof(renderHeight), "Render height must be positive.");
+        }
+    }
+
+    /// <summary>
+    /// Unit used by the values stored in a motion-vector texture.
+    /// </summary>
+    public enum DLSSMotionVectorSpace
+    {
+        /// <summary>The texture stores offsets measured in input/render pixels.</summary>
+        RenderPixels = 0,
+        /// <summary>The texture stores offsets measured in normalized [0, 1] UV space.</summary>
+        NormalizedUV = 1
+    }
+
+    /// <summary>
+    /// Direction represented by a motion vector.
+    /// </summary>
+    public enum DLSSMotionVectorDirection
+    {
+        /// <summary>
+        /// The vector points from the current-frame pixel to its previous-frame
+        /// position. This is the direction required by NGX.
+        /// </summary>
+        CurrentToPrevious = 0,
+        /// <summary>
+        /// The vector points from the previous-frame position to the current-frame
+        /// pixel, so the wrapper must negate it for NGX.
+        /// </summary>
+        PreviousToCurrent = 1
+    }
+
+    /// <summary>
+    /// Describes the units and direction encoded in a motion-vector texture.
+    /// The DLSS wrappers convert this description to NGX's pixel-space scale.
+    /// </summary>
+    public readonly struct DLSSMotionVectorEncoding
+    {
+        public DLSSMotionVectorSpace Space { get; }
+        public DLSSMotionVectorDirection Direction { get; }
+
+        public DLSSMotionVectorEncoding(
+            DLSSMotionVectorSpace space,
+            DLSSMotionVectorDirection direction)
+        {
+            Space = space;
+            Direction = direction;
+        }
+
+        /// <summary>
+        /// VividRP's regular raster motion vectors:
+        /// currentUV - previousUV, stored in normalized UV space.
+        /// </summary>
+        public static DLSSMotionVectorEncoding VividNormalizedUV =>
+            new DLSSMotionVectorEncoding(
+                DLSSMotionVectorSpace.NormalizedUV,
+                DLSSMotionVectorDirection.PreviousToCurrent);
+
+        /// <summary>
+        /// VividRP's ray-tracing GBuffer motion vectors:
+        /// (previousUV - currentUV) * renderSize, stored in pixels.
+        /// </summary>
+        public static DLSSMotionVectorEncoding VividRayTracingPixels =>
+            new DLSSMotionVectorEncoding(
+                DLSSMotionVectorSpace.RenderPixels,
+                DLSSMotionVectorDirection.CurrentToPrevious);
+
+        /// <summary>
+        /// Returns the NGX MV.Scale value that converts the described texture
+        /// values to current-to-previous input/render pixels.
+        /// </summary>
+        public Vector2 GetNGXPixelScale(int renderWidth, int renderHeight)
+        {
+            float scaleX;
+            float scaleY;
+            switch (Space)
+            {
+                case DLSSMotionVectorSpace.RenderPixels:
+                    scaleX = 1.0f;
+                    scaleY = 1.0f;
+                    break;
+                case DLSSMotionVectorSpace.NormalizedUV:
+                    if (renderWidth <= 0)
+                        throw new ArgumentOutOfRangeException(nameof(renderWidth), "Render width must be positive.");
+                    if (renderHeight <= 0)
+                        throw new ArgumentOutOfRangeException(nameof(renderHeight), "Render height must be positive.");
+                    scaleX = renderWidth;
+                    scaleY = renderHeight;
+                    break;
+                default:
+                    throw new ArgumentOutOfRangeException(nameof(Space), Space, "Unknown motion-vector space.");
+            }
+
+            switch (Direction)
+            {
+                case DLSSMotionVectorDirection.CurrentToPrevious:
+                    return new Vector2(scaleX, scaleY);
+                case DLSSMotionVectorDirection.PreviousToCurrent:
+                    return new Vector2(-scaleX, -scaleY);
+                default:
+                    throw new ArgumentOutOfRangeException(nameof(Direction), Direction, "Unknown motion-vector direction.");
+            }
+        }
+    }
+
+    /// <summary>
     /// DLSS depth buffer type for Ray Reconstruction.
     /// </summary>
     public enum DLSSDepthType

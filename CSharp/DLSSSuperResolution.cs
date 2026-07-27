@@ -95,10 +95,8 @@ namespace UnityEngine.Rendering.Universal
         /// <param name="colorOutput">Output color texture (display resolution)</param>
         /// <param name="depth">Depth buffer</param>
         /// <param name="motionVectors">Motion vectors</param>
-        /// <param name="jitterX">Jitter offset X in render pixels</param>
-        /// <param name="jitterY">Jitter offset Y in render pixels</param>
-        /// <param name="mvScaleX">Motion vector scale X (typically render width with sign for direction)</param>
-        /// <param name="mvScaleY">Motion vector scale Y (typically render height with sign for direction)</param>
+        /// <param name="jitterOffset">Jitter offset explicitly converted to input/render pixels</param>
+        /// <param name="motionVectorEncoding">Units and direction encoded in the motion-vector texture</param>
         /// <param name="reset">Reset temporal history (e.g., on scene change)</param>
         /// <param name="preExposure">Pre-exposure value (default 1.0)</param>
         /// <param name="exposureTexture">Optional 1x1 exposure texture</param>
@@ -113,10 +111,8 @@ namespace UnityEngine.Rendering.Universal
             RenderTexture colorOutput,
             RenderTexture depth,
             RenderTexture motionVectors,
-            float jitterX,
-            float jitterY,
-            float mvScaleX,
-            float mvScaleY,
+            DLSSJitterOffset jitterOffset,
+            DLSSMotionVectorEncoding motionVectorEncoding,
             bool reset = false,
             float preExposure = 1.0f,
             RenderTexture exposureTexture = null,
@@ -140,6 +136,10 @@ namespace UnityEngine.Rendering.Universal
             uint inputH = (uint)colorInput.height;
             uint outputW = (uint)colorOutput.width;
             uint outputH = (uint)colorOutput.height;
+            Vector2 jitterPixels = jitterOffset.RenderPixels;
+            Vector2 motionVectorScale = motionVectorEncoding.GetNGXPixelScale(
+                colorInput.width,
+                colorInput.height);
 
             if (m_inputWidth != inputW || m_inputHeight != inputH ||
                 m_outputWidth != outputW || m_outputHeight != outputH)
@@ -178,10 +178,10 @@ namespace UnityEngine.Rendering.Universal
                     colorOutput,
                     depth,
                     motionVectors,
-                    jitterX,
-                    jitterY,
-                    mvScaleX,
-                    mvScaleY,
+                    jitterPixels.x,
+                    jitterPixels.y,
+                    motionVectorScale.x,
+                    motionVectorScale.y,
                     reset,
                     m_inputWidth,
                     m_inputHeight,
@@ -391,10 +391,8 @@ namespace UnityEngine.Rendering.Universal
             RenderTexture colorOutput,
             RenderTexture depth,
             RenderTexture motionVectors,
-            float jitterX,
-            float jitterY,
-            float mvScaleX,
-            float mvScaleY,
+            DLSSJitterOffset jitterOffset,
+            DLSSMotionVectorEncoding motionVectorEncoding,
             bool reset = false,
             float preExposure = 1.0f,
             RenderTexture exposureTexture = null,

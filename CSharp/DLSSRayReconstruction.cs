@@ -181,10 +181,8 @@ namespace UnityEngine.Rendering.Universal
         /// <param name="rayInputs">Ray tracing inputs (direction, hit distance)</param>
         /// <param name="worldToView">World to view matrix</param>
         /// <param name="viewToClip">View to clip (projection) matrix</param>
-        /// <param name="jitterX">Jitter X in render pixels</param>
-        /// <param name="jitterY">Jitter Y in render pixels</param>
-        /// <param name="mvScaleX">Motion vector scale X</param>
-        /// <param name="mvScaleY">Motion vector scale Y</param>
+        /// <param name="jitterOffset">Jitter offset explicitly converted to input/render pixels</param>
+        /// <param name="motionVectorEncoding">Units and direction encoded in the motion-vector texture</param>
         /// <param name="reset">Reset temporal history</param>
         /// <param name="frameTimeDeltaMs">Frame time delta in milliseconds</param>
         /// <returns>
@@ -201,10 +199,8 @@ namespace UnityEngine.Rendering.Universal
             DLSSRRRayInputs rayInputs,
             Matrix4x4 worldToView,
             Matrix4x4 viewToClip,
-            float jitterX,
-            float jitterY,
-            float mvScaleX,
-            float mvScaleY,
+            DLSSJitterOffset jitterOffset,
+            DLSSMotionVectorEncoding motionVectorEncoding,
             bool reset = false,
             float frameTimeDeltaMs = 0.0f)
         {
@@ -227,6 +223,10 @@ namespace UnityEngine.Rendering.Universal
             uint inputH = (uint)colorInput.height;
             uint outputW = (uint)colorOutput.width;
             uint outputH = (uint)colorOutput.height;
+            Vector2 jitterPixels = jitterOffset.RenderPixels;
+            Vector2 motionVectorScale = motionVectorEncoding.GetNGXPixelScale(
+                colorInput.width,
+                colorInput.height);
 
             if (m_inputWidth != inputW || m_inputHeight != inputH ||
                 m_outputWidth != outputW || m_outputHeight != outputH)
@@ -279,10 +279,10 @@ namespace UnityEngine.Rendering.Universal
                     rayInputs.SpecularRayDirectionHitDistance,
                     worldToView,
                     viewToClip,
-                    jitterX,
-                    jitterY,
-                    mvScaleX == 0 ? 1.0f : mvScaleX,
-                    mvScaleY == 0 ? 1.0f : mvScaleY,
+                    jitterPixels.x,
+                    jitterPixels.y,
+                    motionVectorScale.x,
+                    motionVectorScale.y,
                     reset,
                     m_inputWidth,
                     m_inputHeight,
@@ -545,10 +545,8 @@ namespace UnityEngine.Rendering.Universal
             DLSSRRRayInputs rayInputs,
             Matrix4x4 worldToView,
             Matrix4x4 viewToClip,
-            float jitterX,
-            float jitterY,
-            float mvScaleX,
-            float mvScaleY,
+            DLSSJitterOffset jitterOffset,
+            DLSSMotionVectorEncoding motionVectorEncoding,
             bool reset = false,
             float frameTimeDeltaMs = 0.0f)
         {

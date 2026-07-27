@@ -2,7 +2,7 @@
 # This script avoids including the full DLSS repository in the project
 
 param(
-    [string]$DLSSVersion = "main",
+    [string]$DLSSVersion = "v310.6.0",
     [string]$OutputDir = "External\NVIDIA-DLSS"
 )
 
@@ -16,6 +16,7 @@ $LibDir = Join-Path $OutputDir "lib"
 $LibDirDev = Join-Path $LibDir "Dev"
 $LibDirRel = Join-Path $LibDir "Rel"
 $TempDir = Join-Path $env:TEMP "dlss_fetch_$(Get-Random)"
+$ResolvedCommit = "unresolved"
 
 try {
     # Create directories
@@ -41,27 +42,42 @@ try {
         Write-Host "Using git sparse checkout method..." -ForegroundColor Cyan
         
         Push-Location $TempDir
-        
-        # Initialize git repo and configure sparse checkout
-        git init | Out-Null
-        git remote add origin https://github.com/NVIDIA/DLSS.git
-        git config core.sparseCheckout true
-        
-        # Configure sparse checkout paths
-        $sparseConfig = @(
-            "include/*",
-            "lib/Windows_x86_64/rel/*",
-            "lib/Windows_x86_64/dev/*",
-            "lib/Windows_x86_64/x64/*"
-        )
-        $sparseConfig | Out-File -FilePath ".git/info/sparse-checkout" -Encoding ASCII
-        
-        # Fetch and checkout only the needed files
-        Write-Host "Fetching from GitHub..." -ForegroundColor Cyan
-        git fetch --depth 1 origin $DLSSVersion 2>&1 | Out-Null
-        git checkout $DLSSVersion 2>&1 | Out-Null
-        
-        Pop-Location
+        try {
+            # Initialize git repo and configure sparse checkout
+            git init | Out-Null
+            git remote add origin https://github.com/NVIDIA/DLSS.git
+            git config core.sparseCheckout true
+
+            # Configure sparse checkout paths
+            $sparseConfig = @(
+                "include/*",
+                "lib/Windows_x86_64/rel/*",
+                "lib/Windows_x86_64/dev/*",
+                "lib/Windows_x86_64/x64/*"
+            )
+            $sparseConfig | Out-File -FilePath ".git/info/sparse-checkout" -Encoding ASCII
+
+            # Fetch and checkout only the needed files
+            Write-Host "Fetching from GitHub..." -ForegroundColor Cyan
+            git fetch --depth 1 origin $DLSSVersion 2>&1 | Out-Null
+            if ($LASTEXITCODE -ne 0) {
+                throw "Failed to fetch DLSS ref '$DLSSVersion' from NVIDIA/DLSS"
+            }
+
+            # FETCH_HEAD works for branches, tags, and commit hashes. Checking it
+            # out detached avoids assuming that the requested ref is a local branch.
+            git checkout --detach FETCH_HEAD 2>&1 | Out-Null
+            if ($LASTEXITCODE -ne 0) {
+                throw "Failed to check out fetched DLSS ref '$DLSSVersion'"
+            }
+
+            $ResolvedCommit = (git rev-parse HEAD).Trim()
+            if ($LASTEXITCODE -ne 0 -or [string]::IsNullOrWhiteSpace($ResolvedCommit)) {
+                throw "Failed to resolve the fetched DLSS commit"
+            }
+        } finally {
+            Pop-Location
+        }
         
         # Copy include files
         $SourceInclude = Join-Path $TempDir "include"
@@ -129,6 +145,7 @@ try {
         Expand-Archive -Path $zipFile -DestinationPath $TempDir -Force
         
         $ExtractedDir = Join-Path $TempDir "DLSS-$DLSSVersion"
+        $ResolvedCommit = "archive:$DLSSVersion"
         
         # Copy include files
         $SourceInclude = Join-Path $ExtractedDir "include"
@@ -189,8 +206,16 @@ try {
     $relDllCount = (Get-ChildItem -Path $LibDirRel -File -Filter "*.dll" -ErrorAction SilentlyContinue | Measure-Object).Count
     $devDllCount = (Get-ChildItem -Path $LibDirDev -File -Filter "*.dll" -ErrorAction SilentlyContinue | Measure-Object).Count
     $libCount = (Get-ChildItem -Path $LibDir -File -Filter "*.lib" -ErrorAction SilentlyContinue | Measure-Object).Count
+
+    @(
+        "Ref=$DLSSVersion"
+        "Commit=$ResolvedCommit"
+        "FetchedAtUtc=$([DateTime]::UtcNow.ToString('o'))"
+    ) | Set-Content -Path (Join-Path $OutputDir "SDK_VERSION.txt") -Encoding ASCII
     
     Write-Host "`nSummary:" -ForegroundColor Green
+    Write-Host "  Ref: $DLSSVersion" -ForegroundColor Cyan
+    Write-Host "  Commit: $ResolvedCommit" -ForegroundColor Cyan
     Write-Host "  Headers copied: $headerCount files" -ForegroundColor Cyan
     Write-Host "  Release DLLs copied: $relDllCount files (to $LibDirRel)" -ForegroundColor Cyan
     Write-Host "  Debug DLLs copied: $devDllCount files (to $LibDirDev)" -ForegroundColor Cyan
@@ -208,4 +233,3 @@ try {
 }
 
 Write-Host "`nDone!" -ForegroundColor Green
-

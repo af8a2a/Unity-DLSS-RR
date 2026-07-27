@@ -151,6 +151,115 @@ namespace UnityEngine.Rendering.Universal
     }
 
     /// <summary>
+    /// Per-frame exposure inputs consumed by DLSS-SR and DLSS-RR.
+    /// </summary>
+    /// <remarks>
+    /// PreExposure is the multiplier that has already been applied to the input
+    /// color. ExposureScale is NGX's additional exposure-scale parameter.
+    /// ExposureTexture, when present, must be a created 1x1 2D texture whose
+    /// first channel contains the final exposure scale.
+    ///
+    /// The AutoExposure feature flag is a feature-creation choice and is not
+    /// represented here. When that flag is enabled, the exposure texture may be
+    /// omitted while PreExposure must still describe the input color correctly.
+    /// </remarks>
+    public readonly struct DLSSExposure
+    {
+        public float PreExposure { get; }
+        public float ExposureScale { get; }
+        public RenderTexture ExposureTexture { get; }
+
+        /// <summary>
+        /// Unit exposure for an input color that has not been pre-exposed.
+        /// </summary>
+        public static DLSSExposure Identity => new DLSSExposure(1.0f, 1.0f, null);
+
+        public DLSSExposure(
+            float preExposure,
+            float exposureScale,
+            RenderTexture exposureTexture = null)
+        {
+            if (!IsPositiveFinite(preExposure))
+            {
+                throw new ArgumentOutOfRangeException(
+                    nameof(preExposure),
+                    "Pre-exposure must be finite and greater than zero.");
+            }
+
+            if (!IsPositiveFinite(exposureScale))
+            {
+                throw new ArgumentOutOfRangeException(
+                    nameof(exposureScale),
+                    "Exposure scale must be finite and greater than zero.");
+            }
+
+            ValidateTextureShape(exposureTexture);
+
+            PreExposure = preExposure;
+            ExposureScale = exposureScale;
+            ExposureTexture = exposureTexture;
+        }
+
+        internal bool TryValidate(out string error)
+        {
+            if (!IsPositiveFinite(PreExposure))
+            {
+                error = "Pre-exposure must be finite and greater than zero. " +
+                    "Pass DLSSExposure.Identity when the input is not pre-exposed.";
+                return false;
+            }
+
+            if (!IsPositiveFinite(ExposureScale))
+            {
+                error = "Exposure scale must be finite and greater than zero.";
+                return false;
+            }
+
+            if (ExposureTexture != null)
+            {
+                if (ExposureTexture.width != 1 ||
+                    ExposureTexture.height != 1 ||
+                    ExposureTexture.volumeDepth != 1 ||
+                    ExposureTexture.dimension != TextureDimension.Tex2D)
+                {
+                    error = "Exposure texture must be a 1x1, single-slice 2D RenderTexture.";
+                    return false;
+                }
+
+                if (!ExposureTexture.IsCreated())
+                {
+                    error = "Exposure texture must be created before DLSS evaluation.";
+                    return false;
+                }
+            }
+
+            error = null;
+            return true;
+        }
+
+        private static bool IsPositiveFinite(float value)
+        {
+            return value > 0.0f && !float.IsNaN(value) && !float.IsInfinity(value);
+        }
+
+        private static void ValidateTextureShape(RenderTexture texture)
+        {
+            if (texture == null)
+                return;
+
+            if (texture.width != 1 ||
+                texture.height != 1 ||
+                texture.volumeDepth != 1 ||
+                texture.dimension != TextureDimension.Tex2D)
+            {
+                throw new ArgumentException(
+                    "Exposure texture must be a 1x1, single-slice 2D RenderTexture.",
+                    nameof(texture));
+            }
+        }
+    }
+
+    /// <summary>
     /// Jitter offset in the input/render pixel space required by NGX.
     /// </summary>
     public readonly struct DLSSJitterOffset

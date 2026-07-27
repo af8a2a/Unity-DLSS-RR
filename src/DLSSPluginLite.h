@@ -128,6 +128,7 @@ typedef struct DLSSSuperResolutionEvaluateParams
 typedef struct DLSSRayReconstructionEvaluateParams
 {
     DLSSCommonEvaluateParams common;
+    void* exposureTexture;
     void* diffuseAlbedo;
     void* specularAlbedo;
     void* normals;
@@ -146,6 +147,8 @@ typedef struct DLSSRayReconstructionEvaluateParams
 
 #ifdef __cplusplus
 static_assert(sizeof(DLSSMatrix4x4) == 16 * sizeof(float));
+static_assert(offsetof(DLSSRayReconstructionEvaluateParams, exposureTexture) ==
+    sizeof(DLSSCommonEvaluateParams));
 static_assert(offsetof(DLSSRayReconstructionEvaluateParams, viewToClip) ==
     offsetof(DLSSRayReconstructionEvaluateParams, worldToView) + sizeof(DLSSMatrix4x4));
 #endif

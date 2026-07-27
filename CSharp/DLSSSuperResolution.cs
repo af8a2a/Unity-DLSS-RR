@@ -97,9 +97,8 @@ namespace UnityEngine.Rendering.Universal
         /// <param name="motionVectors">Motion vectors</param>
         /// <param name="jitterOffset">Jitter offset explicitly converted to input/render pixels</param>
         /// <param name="motionVectorEncoding">Units and direction encoded in the motion-vector texture</param>
+        /// <param name="exposure">Explicit per-frame pre-exposure, exposure scale, and optional final-exposure texture</param>
         /// <param name="reset">Reset temporal history (e.g., on scene change)</param>
-        /// <param name="preExposure">Pre-exposure value (default 1.0)</param>
-        /// <param name="exposureTexture">Optional 1x1 exposure texture</param>
         /// <param name="biasColorMask">Optional bias color mask</param>
         /// <returns>
         /// True only when the native feature is ready and evaluation was queued.
@@ -113,9 +112,8 @@ namespace UnityEngine.Rendering.Universal
             RenderTexture motionVectors,
             DLSSJitterOffset jitterOffset,
             DLSSMotionVectorEncoding motionVectorEncoding,
+            DLSSExposure exposure,
             bool reset = false,
-            float preExposure = 1.0f,
-            RenderTexture exposureTexture = null,
             RenderTexture biasColorMask = null)
         {
             if (!IsSupported || Extension == null)
@@ -128,6 +126,13 @@ namespace UnityEngine.Rendering.Universal
             if (colorInput == null || colorOutput == null || depth == null || motionVectors == null)
             {
                 Debug.LogError("[DLSSSuperResolution] Required textures are null");
+                return false;
+            }
+
+            if (!exposure.TryValidate(out string exposureError))
+            {
+                Debug.LogError($"[DLSSSuperResolution] Invalid exposure contract: {exposureError}");
+                RecordFallback(cmd, colorInput, colorOutput);
                 return false;
             }
 
@@ -185,8 +190,7 @@ namespace UnityEngine.Rendering.Universal
                     reset,
                     m_inputWidth,
                     m_inputHeight,
-                    preExposure,
-                    exposureTexture,
+                    exposure,
                     biasColorMask))
             {
                 return true;
@@ -393,9 +397,8 @@ namespace UnityEngine.Rendering.Universal
             RenderTexture motionVectors,
             DLSSJitterOffset jitterOffset,
             DLSSMotionVectorEncoding motionVectorEncoding,
+            DLSSExposure exposure,
             bool reset = false,
-            float preExposure = 1.0f,
-            RenderTexture exposureTexture = null,
             RenderTexture biasColorMask = null)
         {
             return false;

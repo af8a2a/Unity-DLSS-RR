@@ -329,6 +329,7 @@ namespace UnityEngine.Rendering.Universal
         private struct DLSSRayReconstructionEvaluateParams
         {
             public DLSSCommonEvaluateParams common;
+            public IntPtr exposureTexture;
             public IntPtr diffuseAlbedo;
             public IntPtr specularAlbedo;
             public IntPtr normals;
@@ -704,8 +705,7 @@ namespace UnityEngine.Rendering.Universal
             bool reset,
             uint renderSubrectWidth,
             uint renderSubrectHeight,
-            float preExposure,
-            RenderTexture exposureTexture,
+            DLSSExposure exposure,
             RenderTexture biasColorMask)
         {
             var evaluateParams = new DLSSSuperResolutionEvaluateParams
@@ -723,8 +723,9 @@ namespace UnityEngine.Rendering.Universal
                     reset,
                     renderSubrectWidth,
                     renderSubrectHeight,
-                    preExposure),
-                exposureTexture = GetNativeTexturePtr(exposureTexture),
+                    exposure.PreExposure,
+                    exposure.ExposureScale),
+                exposureTexture = GetNativeTexturePtr(exposure.ExposureTexture),
                 biasColorMask = GetNativeTexturePtr(biasColorMask)
             };
 
@@ -747,6 +748,7 @@ namespace UnityEngine.Rendering.Universal
             RenderTexture colorOutput,
             RenderTexture depth,
             RenderTexture motionVectors,
+            DLSSExposure exposure,
             RenderTexture diffuseAlbedo,
             RenderTexture specularAlbedo,
             RenderTexture normals,
@@ -784,7 +786,9 @@ namespace UnityEngine.Rendering.Universal
                     reset,
                     renderSubrectWidth,
                     renderSubrectHeight,
-                    1.0f),
+                    exposure.PreExposure,
+                    exposure.ExposureScale),
+                exposureTexture = GetNativeTexturePtr(exposure.ExposureTexture),
                 diffuseAlbedo = GetNativeTexturePtr(diffuseAlbedo),
                 specularAlbedo = GetNativeTexturePtr(specularAlbedo),
                 normals = GetNativeTexturePtr(normals),
@@ -844,7 +848,8 @@ namespace UnityEngine.Rendering.Universal
             bool reset,
             uint renderSubrectWidth,
             uint renderSubrectHeight,
-            float preExposure)
+            float preExposure,
+            float exposureScale)
         {
             return new DLSSCommonEvaluateParams
             {
@@ -861,7 +866,7 @@ namespace UnityEngine.Rendering.Universal
                 renderSubrectWidth = renderSubrectWidth,
                 renderSubrectHeight = renderSubrectHeight,
                 preExposure = preExposure,
-                exposureScale = 1.0f,
+                exposureScale = exposureScale,
                 invertXAxis = 0,
                 invertYAxis = 1
             };

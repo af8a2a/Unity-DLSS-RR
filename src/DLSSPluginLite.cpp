@@ -855,6 +855,10 @@ static void UNITY_INTERFACE_API OnDLSSRenderEvent(int eventId, void* data)
         SetCommonEvaluateParameters(parameters, params->common);
         SetD3D12ResourceParameter(
             parameters,
+            NVSDK_NGX_Parameter_ExposureTexture,
+            params->exposureTexture);
+        SetD3D12ResourceParameter(
+            parameters,
             NVSDK_NGX_Parameter_DiffuseAlbedo,
             params->diffuseAlbedo);
         SetD3D12ResourceParameter(

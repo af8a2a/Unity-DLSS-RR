@@ -183,6 +183,7 @@ namespace UnityEngine.Rendering.Universal
         /// <param name="viewToClip">View to clip (projection) matrix</param>
         /// <param name="jitterOffset">Jitter offset explicitly converted to input/render pixels</param>
         /// <param name="motionVectorEncoding">Units and direction encoded in the motion-vector texture</param>
+        /// <param name="exposure">Explicit per-frame pre-exposure, exposure scale, and optional final-exposure texture</param>
         /// <param name="reset">Reset temporal history</param>
         /// <param name="frameTimeDeltaMs">Frame time delta in milliseconds</param>
         /// <returns>
@@ -201,6 +202,7 @@ namespace UnityEngine.Rendering.Universal
             Matrix4x4 viewToClip,
             DLSSJitterOffset jitterOffset,
             DLSSMotionVectorEncoding motionVectorEncoding,
+            DLSSExposure exposure,
             bool reset = false,
             float frameTimeDeltaMs = 0.0f)
         {
@@ -214,6 +216,13 @@ namespace UnityEngine.Rendering.Universal
             // Validate required inputs
             if (!ValidateInputs(colorInput, colorOutput, depth, motionVectors, gbuffer, rayInputs))
             {
+                RecordFallback(cmd, colorInput, colorOutput);
+                return false;
+            }
+
+            if (!exposure.TryValidate(out string exposureError))
+            {
+                Debug.LogError($"[DLSSRayReconstruction] Invalid exposure contract: {exposureError}");
                 RecordFallback(cmd, colorInput, colorOutput);
                 return false;
             }
@@ -266,6 +275,7 @@ namespace UnityEngine.Rendering.Universal
                     colorOutput,
                     depth,
                     motionVectors,
+                    exposure,
                     gbuffer.DiffuseAlbedo,
                     gbuffer.SpecularAlbedo,
                     gbuffer.Normals,
@@ -547,6 +557,7 @@ namespace UnityEngine.Rendering.Universal
             Matrix4x4 viewToClip,
             DLSSJitterOffset jitterOffset,
             DLSSMotionVectorEncoding motionVectorEncoding,
+            DLSSExposure exposure,
             bool reset = false,
             float frameTimeDeltaMs = 0.0f)
         {

@@ -8,7 +8,10 @@
 
 
 
+#include <cstdlib>
 #include <d3d12.h>
+#include <memory>
+#include <mutex>
 #include <unordered_map>
 #include <sstream>
 
@@ -143,16 +146,6 @@ static const char* GetFeatureString(NVSDK_NGX_Feature feature)
     }
 }
 
-static ID3D12Resource* GetD3D12ResourceParameter(NVSDK_NGX_Parameter* params, const char* name)
-{
-    if (!params || !name)
-        return nullptr;
-
-    ID3D12Resource* resource = nullptr;
-    NVSDK_NGX_Result result = NVSDK_NGX_Parameter_GetD3d12Resource(params, name, &resource);
-    return NVSDK_NGX_SUCCEED(result) ? resource : nullptr;
-}
-
 //------------------------------------------------------------------------------
 // NGX Log Callback
 //------------------------------------------------------------------------------
@@ -181,7 +174,18 @@ static void NVSDK_CONV NGXLogCallback(const char* message, NVSDK_NGX_Logging_Lev
 //------------------------------------------------------------------------------
 
 static uint32_t g_featureHandleCounter = 0;
-static std::unordered_map<int, NVSDK_NGX_Handle*> g_featureHandles;
+
+struct DLSSFeatureHandleRecord
+{
+    NVSDK_NGX_Handle* ngxHandle = nullptr;
+    NVSDK_NGX_Parameter* parameters = nullptr;
+    DLSSNGXFeature feature = DLSS_NGX_Feature_SuperSampling;
+    DLSSFeatureStatus status = DLSS_FeatureStatus_Pending;
+    int createResult = 0;
+};
+
+static std::mutex g_featureHandlesMutex;
+static std::unordered_map<int, DLSSFeatureHandleRecord> g_featureHandles;
 
 //------------------------------------------------------------------------------
 // Initialization/Shutdown
@@ -244,16 +248,24 @@ int UNITY_INTERFACE_EXPORT UNITY_INTERFACE_API DLSS_Shutdown_D3D12(void)
 
     ID3D12Device* device = g_unityGraphics_D3D12->GetDevice();
 
-    // Release all feature handles
-    for (auto& pair : g_featureHandles)
     {
-        if (pair.second != nullptr)
+        std::lock_guard<std::mutex> lock(g_featureHandlesMutex);
+
+        // Release all feature handles
+        for (auto& pair : g_featureHandles)
         {
-            NVSDK_NGX_D3D12_ReleaseFeature(pair.second);
+            if (pair.second.ngxHandle != nullptr)
+            {
+                NVSDK_NGX_D3D12_ReleaseFeature(pair.second.ngxHandle);
+            }
+            if (pair.second.parameters != nullptr)
+            {
+                NVSDK_NGX_D3D12_DestroyParameters(pair.second.parameters);
+            }
         }
+        g_featureHandles.clear();
+        g_featureHandleCounter = 0;
     }
-    g_featureHandles.clear();
-    g_featureHandleCounter = 0;
 
     NVSDK_NGX_Result result = NVSDK_NGX_D3D12_Shutdown1(device);
     LogDlssResult(result, "NVSDK_NGX_D3D12_Shutdown1");
@@ -468,24 +480,38 @@ int UNITY_INTERFACE_EXPORT UNITY_INTERFACE_API DLSS_Parameter_GetVoidPointer(
 // Feature Handle Management
 //------------------------------------------------------------------------------
 
-int UNITY_INTERFACE_EXPORT UNITY_INTERFACE_API DLSS_AllocateFeatureHandle(void)
+int UNITY_INTERFACE_EXPORT UNITY_INTERFACE_API DLSS_AllocateFeatureHandle(
+    void* parameters)
 {
-    // Find next available handle (wrap around at 1024)
-    int handle = static_cast<int>(g_featureHandleCounter % 1024);
-
-    if (g_featureHandles.find(handle) != g_featureHandles.end())
+    if (!parameters)
     {
-        LogError("DLSS_AllocateFeatureHandle: handle already exists");
+        LogError("DLSS_AllocateFeatureHandle: parameters is null");
         return DLSS_INVALID_FEATURE_HANDLE;
     }
 
-    g_featureHandles[handle] = nullptr;
-    g_featureHandleCounter++;
-    return handle;
+    std::lock_guard<std::mutex> lock(g_featureHandlesMutex);
+
+    // Find the next available handle (wrap around at 1024).
+    for (uint32_t attempt = 0; attempt < 1024; ++attempt)
+    {
+        int handle = static_cast<int>(g_featureHandleCounter++ % 1024);
+        if (g_featureHandles.find(handle) == g_featureHandles.end())
+        {
+            DLSSFeatureHandleRecord record = {};
+            record.parameters = static_cast<NVSDK_NGX_Parameter*>(parameters);
+            g_featureHandles.emplace(handle, record);
+            return handle;
+        }
+    }
+
+    LogError("DLSS_AllocateFeatureHandle: no handles available");
+    return DLSS_INVALID_FEATURE_HANDLE;
 }
 
 int UNITY_INTERFACE_EXPORT UNITY_INTERFACE_API DLSS_FreeFeatureHandle(int handle)
 {
+    std::lock_guard<std::mutex> lock(g_featureHandlesMutex);
+
     auto it = g_featureHandles.find(handle);
     if (it == g_featureHandles.end())
     {
@@ -493,13 +519,180 @@ int UNITY_INTERFACE_EXPORT UNITY_INTERFACE_API DLSS_FreeFeatureHandle(int handle
         return -1;
     }
 
+    if (it->second.ngxHandle != nullptr)
+    {
+        LogError("DLSS_FreeFeatureHandle: ready feature must be released through a destroy render event");
+        return -1;
+    }
+
+    if (it->second.parameters != nullptr)
+    {
+        NVSDK_NGX_Result result = NVSDK_NGX_D3D12_DestroyParameters(
+            it->second.parameters);
+        LogDlssResult(result, "NVSDK_NGX_D3D12_DestroyParameters");
+    }
+
     g_featureHandles.erase(it);
     return 0;
+}
+
+int UNITY_INTERFACE_EXPORT UNITY_INTERFACE_API DLSS_GetFeatureHandleStatus(
+    int handle,
+    int* pCreateResult)
+{
+    if (!pCreateResult)
+    {
+        return static_cast<int>(DLSS_FeatureStatus_Invalid);
+    }
+
+    std::lock_guard<std::mutex> lock(g_featureHandlesMutex);
+
+    auto it = g_featureHandles.find(handle);
+    if (it == g_featureHandles.end())
+    {
+        *pCreateResult = static_cast<int>(NVSDK_NGX_Result_FAIL_InvalidParameter);
+        return static_cast<int>(DLSS_FeatureStatus_Invalid);
+    }
+
+    *pCreateResult = it->second.createResult;
+    return static_cast<int>(it->second.status);
+}
+
+UNITY_INTERFACE_EXPORT void* UNITY_INTERFACE_API DLSS_AllocateEventData(
+    unsigned int size)
+{
+    if (size == 0)
+        return nullptr;
+
+    return std::malloc(size);
+}
+
+void UNITY_INTERFACE_EXPORT UNITY_INTERFACE_API DLSS_FreeEventData(void* data)
+{
+    std::free(data);
+}
+
+unsigned int UNITY_INTERFACE_EXPORT UNITY_INTERFACE_API DLSS_GetEventDataSize(
+    int eventId)
+{
+    switch (eventId)
+    {
+    case DLSS_Event_CreateFeature:
+        return static_cast<unsigned int>(sizeof(DLSSCreateFeatureParams));
+    case DLSS_Event_EvaluateSuperResolution:
+        return static_cast<unsigned int>(sizeof(DLSSSuperResolutionEvaluateParams));
+    case DLSS_Event_DestroyFeature:
+        return static_cast<unsigned int>(sizeof(DLSSDestroyFeatureParams));
+    case DLSS_Event_EvaluateRayReconstruction:
+        return static_cast<unsigned int>(sizeof(DLSSRayReconstructionEvaluateParams));
+    default:
+        return 0;
+    }
 }
 
 //------------------------------------------------------------------------------
 // Render Event Handler
 //------------------------------------------------------------------------------
+
+struct EventDataDeleter
+{
+    void operator()(void* data) const
+    {
+        std::free(data);
+    }
+};
+
+static void SetD3D12ResourceParameter(
+    NVSDK_NGX_Parameter* parameters,
+    const char* name,
+    void* resource)
+{
+    NVSDK_NGX_Parameter_SetD3d12Resource(
+        parameters,
+        name,
+        static_cast<ID3D12Resource*>(resource));
+}
+
+static void SetCommonEvaluateParameters(
+    NVSDK_NGX_Parameter* parameters,
+    const DLSSCommonEvaluateParams& common)
+{
+    SetD3D12ResourceParameter(parameters, NVSDK_NGX_Parameter_Color, common.color);
+    SetD3D12ResourceParameter(parameters, NVSDK_NGX_Parameter_Output, common.output);
+    SetD3D12ResourceParameter(parameters, NVSDK_NGX_Parameter_Depth, common.depth);
+    SetD3D12ResourceParameter(parameters, NVSDK_NGX_Parameter_MotionVectors, common.motionVectors);
+
+    NVSDK_NGX_Parameter_SetF(parameters, NVSDK_NGX_Parameter_Jitter_Offset_X, common.jitterOffsetX);
+    NVSDK_NGX_Parameter_SetF(parameters, NVSDK_NGX_Parameter_Jitter_Offset_Y, common.jitterOffsetY);
+    NVSDK_NGX_Parameter_SetF(parameters, NVSDK_NGX_Parameter_MV_Scale_X, common.motionVectorScaleX);
+    NVSDK_NGX_Parameter_SetF(parameters, NVSDK_NGX_Parameter_MV_Scale_Y, common.motionVectorScaleY);
+    NVSDK_NGX_Parameter_SetI(parameters, NVSDK_NGX_Parameter_Reset, common.reset);
+    NVSDK_NGX_Parameter_SetUI(
+        parameters,
+        NVSDK_NGX_Parameter_DLSS_Render_Subrect_Dimensions_Width,
+        common.renderSubrectWidth);
+    NVSDK_NGX_Parameter_SetUI(
+        parameters,
+        NVSDK_NGX_Parameter_DLSS_Render_Subrect_Dimensions_Height,
+        common.renderSubrectHeight);
+    NVSDK_NGX_Parameter_SetF(parameters, NVSDK_NGX_Parameter_DLSS_Pre_Exposure, common.preExposure);
+    NVSDK_NGX_Parameter_SetF(parameters, NVSDK_NGX_Parameter_DLSS_Exposure_Scale, common.exposureScale);
+    NVSDK_NGX_Parameter_SetI(
+        parameters,
+        NVSDK_NGX_Parameter_DLSS_Indicator_Invert_X_Axis,
+        common.invertXAxis);
+    NVSDK_NGX_Parameter_SetI(
+        parameters,
+        NVSDK_NGX_Parameter_DLSS_Indicator_Invert_Y_Axis,
+        common.invertYAxis);
+}
+
+static NVSDK_NGX_Result EvaluateFeatureLocked(
+    ID3D12GraphicsCommandList* commandList,
+    DLSSFeatureHandleRecord& record,
+    const DLSSCommonEvaluateParams& common)
+{
+    ID3D12Resource* outputResource = static_cast<ID3D12Resource*>(common.output);
+    if (outputResource)
+    {
+        g_unityGraphics_D3D12->RequestResourceState(
+            outputResource,
+            D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
+    }
+
+    NVSDK_NGX_Result result = NVSDK_NGX_D3D12_EvaluateFeature(
+        commandList,
+        record.ngxHandle,
+        record.parameters,
+        nullptr);
+
+    if (outputResource)
+    {
+        g_unityGraphics_D3D12->NotifyResourceState(
+            outputResource,
+            D3D12_RESOURCE_STATE_UNORDERED_ACCESS,
+            true);
+    }
+
+    return result;
+}
+
+static void MarkCreateFeatureFailed(void* data, NVSDK_NGX_Result result)
+{
+    if (!data)
+        return;
+
+    DLSSCreateFeatureParams* params = static_cast<DLSSCreateFeatureParams*>(data);
+    std::lock_guard<std::mutex> lock(g_featureHandlesMutex);
+
+    auto it = g_featureHandles.find(params->handle);
+    if (it != g_featureHandles.end())
+    {
+        it->second.ngxHandle = nullptr;
+        it->second.status = DLSS_FeatureStatus_Failed;
+        it->second.createResult = static_cast<int>(result);
+    }
+}
 
 static void UNITY_INTERFACE_API OnDLSSRenderEvent(int eventId, void* data)
 {
@@ -509,41 +702,88 @@ static void UNITY_INTERFACE_API OnDLSSRenderEvent(int eventId, void* data)
         return;
     }
 
-    if (!g_unityGraphics_D3D12)
-    {
-        LogError("OnDLSSRenderEvent: Unity D3D12 interface not available");
-        return;
-    }
+    std::unique_ptr<void, EventDataDeleter> ownedData(data);
 
-    // Get command list from Unity
-    UnityGraphicsD3D12RecordingState recordingState = {};
-    if (!g_unityGraphics_D3D12->CommandRecordingState(&recordingState) || !recordingState.commandList)
+    ID3D12GraphicsCommandList* cmdList = nullptr;
+    if (eventId != DLSS_Event_DestroyFeature)
     {
-        LogError("OnDLSSRenderEvent: Failed to get command list from Unity");
-        return;
-    }
+        if (!g_unityGraphics_D3D12)
+        {
+            LogError("OnDLSSRenderEvent: Unity D3D12 interface not available");
+            if (eventId == DLSS_Event_CreateFeature)
+            {
+                MarkCreateFeatureFailed(data, NVSDK_NGX_Result_FAIL_PlatformError);
+            }
+            return;
+        }
 
-    ID3D12GraphicsCommandList* cmdList = recordingState.commandList;
+        // Create and evaluate need Unity's active D3D12 command list. Destroy
+        // only releases native objects and remains valid without recording state.
+        UnityGraphicsD3D12RecordingState recordingState = {};
+        if (!g_unityGraphics_D3D12->CommandRecordingState(&recordingState) ||
+            !recordingState.commandList)
+        {
+            LogError("OnDLSSRenderEvent: Failed to get command list from Unity");
+            if (eventId == DLSS_Event_CreateFeature)
+            {
+                MarkCreateFeatureFailed(data, NVSDK_NGX_Result_FAIL_PlatformError);
+            }
+            return;
+        }
+
+        cmdList = recordingState.commandList;
+    }
 
     switch (eventId)
     {
     case DLSS_Event_CreateFeature:
     {
         DLSSCreateFeatureParams* params = static_cast<DLSSCreateFeatureParams*>(data);
-        NVSDK_NGX_Parameter* ngxParams = static_cast<NVSDK_NGX_Parameter*>(params->parameters);
+        std::lock_guard<std::mutex> lock(g_featureHandlesMutex);
+        auto it = g_featureHandles.find(params->handle);
+        if (it == g_featureHandles.end() ||
+            it->second.status != DLSS_FeatureStatus_Pending ||
+            it->second.parameters != params->parameters)
+        {
+            LogError("OnDLSSRenderEvent: CreateFeature - invalid handle or parameter ownership");
+            return;
+        }
 
         NVSDK_NGX_Handle* ngxHandle = nullptr;
         NVSDK_NGX_Feature feature = static_cast<NVSDK_NGX_Feature>(params->feature);
+        it->second.feature = params->feature;
 
         NVSDK_NGX_Result result = NVSDK_NGX_D3D12_CreateFeature(
-            cmdList, feature, ngxParams, &ngxHandle);
+            cmdList,
+            feature,
+            it->second.parameters,
+            &ngxHandle);
+
+        if (NVSDK_NGX_SUCCEED(result) && ngxHandle == nullptr)
+        {
+            result = NVSDK_NGX_Result_FAIL_FeatureNotFound;
+        }
 
         LogDlssResult(result, "NVSDK_NGX_D3D12_CreateFeature");
 
-        if (NVSDK_NGX_SUCCEED(result))
+        it->second.createResult = static_cast<int>(result);
+        if (NVSDK_NGX_SUCCEED(result) && ngxHandle != nullptr)
         {
-            g_featureHandles[params->handle] = ngxHandle;
+            it->second.ngxHandle = ngxHandle;
+            it->second.status = DLSS_FeatureStatus_Ready;
+        }
+        else
+        {
+            if (ngxHandle != nullptr)
+            {
+                NVSDK_NGX_D3D12_ReleaseFeature(ngxHandle);
+            }
+            it->second.ngxHandle = nullptr;
+            it->second.status = DLSS_FeatureStatus_Failed;
+        }
 
+        if (NVSDK_NGX_SUCCEED(result) && ngxHandle != nullptr)
+        {
             std::ostringstream oss;
             oss << "[DLSS] Created " << GetFeatureString(feature) << " feature, handle=" << params->handle;
             LogMessage(oss.str().c_str());
@@ -551,55 +791,133 @@ static void UNITY_INTERFACE_API OnDLSSRenderEvent(int eventId, void* data)
         break;
     }
 
-    case DLSS_Event_EvaluateFeature:
+    case DLSS_Event_EvaluateSuperResolution:
     {
-        DLSSEvaluateFeatureParams* params = static_cast<DLSSEvaluateFeatureParams*>(data);
-        NVSDK_NGX_Parameter* ngxParams = static_cast<NVSDK_NGX_Parameter*>(params->parameters);
-
-        auto it = g_featureHandles.find(params->handle);
-        if (it == g_featureHandles.end() || it->second == nullptr)
+        DLSSSuperResolutionEvaluateParams* params =
+            static_cast<DLSSSuperResolutionEvaluateParams*>(data);
+        std::lock_guard<std::mutex> lock(g_featureHandlesMutex);
+        auto it = g_featureHandles.find(params->common.handle);
+        if (it == g_featureHandles.end() ||
+            it->second.status != DLSS_FeatureStatus_Ready ||
+            it->second.ngxHandle == nullptr ||
+            it->second.parameters == nullptr ||
+            it->second.feature != DLSS_NGX_Feature_SuperSampling)
         {
             std::ostringstream oss;
-            oss << "OnDLSSRenderEvent: EvaluateFeature - handle " << params->handle << " not found";
+            oss << "OnDLSSRenderEvent: EvaluateSuperResolution - handle "
+                << params->common.handle << " is not ready";
             LogError(oss.str().c_str());
             return;
         }
 
-        NVSDK_NGX_Handle* ngxHandle = it->second;
-        if (params->hasMatrices != 0)
-        {
-            // DLSS-RR expects pointers to row-major matrices under the exact NGX
-            // parameter names. The matrices live in this event payload, so their
-            // addresses remain valid for the duration of EvaluateFeature.
-            NVSDK_NGX_Parameter_SetVoidPointer(
-                ngxParams,
-                NVSDK_NGX_Parameter_DLSS_WORLD_TO_VIEW_MATRIX,
-                params->worldToView.values);
-            NVSDK_NGX_Parameter_SetVoidPointer(
-                ngxParams,
-                NVSDK_NGX_Parameter_DLSS_VIEW_TO_CLIP_MATRIX,
-                params->viewToClip.values);
-        }
+        SetCommonEvaluateParameters(it->second.parameters, params->common);
+        SetD3D12ResourceParameter(
+            it->second.parameters,
+            NVSDK_NGX_Parameter_ExposureTexture,
+            params->exposureTexture);
+        SetD3D12ResourceParameter(
+            it->second.parameters,
+            NVSDK_NGX_Parameter_DLSS_Input_Bias_Current_Color_Mask,
+            params->biasColorMask);
 
-        ID3D12Resource* outputResource = GetD3D12ResourceParameter(ngxParams, NVSDK_NGX_Parameter_Output);
-        if (outputResource)
-        {
-            g_unityGraphics_D3D12->RequestResourceState(outputResource, D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
-        }
-
-        NVSDK_NGX_Result result = NVSDK_NGX_D3D12_EvaluateFeature(cmdList, ngxHandle, ngxParams, nullptr);
-
-        if (outputResource)
-        {
-            g_unityGraphics_D3D12->NotifyResourceState(
-                outputResource,
-                D3D12_RESOURCE_STATE_UNORDERED_ACCESS,
-                true);
-        }
+        NVSDK_NGX_Result result = EvaluateFeatureLocked(
+            cmdList,
+            it->second,
+            params->common);
 
         if (!NVSDK_NGX_SUCCEED(result))
         {
-            LogDlssResult(result, "NVSDK_NGX_D3D12_EvaluateFeature");
+            LogDlssResult(result, "NVSDK_NGX_D3D12_EvaluateFeature (DLSS-SR)");
+        }
+        break;
+    }
+
+    case DLSS_Event_EvaluateRayReconstruction:
+    {
+        DLSSRayReconstructionEvaluateParams* params =
+            static_cast<DLSSRayReconstructionEvaluateParams*>(data);
+        std::lock_guard<std::mutex> lock(g_featureHandlesMutex);
+        auto it = g_featureHandles.find(params->common.handle);
+        if (it == g_featureHandles.end() ||
+            it->second.status != DLSS_FeatureStatus_Ready ||
+            it->second.ngxHandle == nullptr ||
+            it->second.parameters == nullptr ||
+            it->second.feature != DLSS_NGX_Feature_RayReconstruction)
+        {
+            std::ostringstream oss;
+            oss << "OnDLSSRenderEvent: EvaluateRayReconstruction - handle "
+                << params->common.handle << " is not ready";
+            LogError(oss.str().c_str());
+            return;
+        }
+
+        NVSDK_NGX_Parameter* parameters = it->second.parameters;
+        SetCommonEvaluateParameters(parameters, params->common);
+        SetD3D12ResourceParameter(
+            parameters,
+            NVSDK_NGX_Parameter_DiffuseAlbedo,
+            params->diffuseAlbedo);
+        SetD3D12ResourceParameter(
+            parameters,
+            NVSDK_NGX_Parameter_SpecularAlbedo,
+            params->specularAlbedo);
+        SetD3D12ResourceParameter(
+            parameters,
+            NVSDK_NGX_Parameter_GBuffer_Normals,
+            params->normals);
+        SetD3D12ResourceParameter(
+            parameters,
+            NVSDK_NGX_Parameter_GBuffer_Roughness,
+            params->roughness);
+        SetD3D12ResourceParameter(
+            parameters,
+            NVSDK_NGX_Parameter_GBuffer_Emissive,
+            params->emissive);
+        SetD3D12ResourceParameter(
+            parameters,
+            NVSDK_NGX_Parameter_DLSSD_DiffuseRayDirection,
+            params->diffuseRayDirection);
+        SetD3D12ResourceParameter(
+            parameters,
+            NVSDK_NGX_Parameter_DLSSD_DiffuseHitDistance,
+            params->diffuseHitDistance);
+        SetD3D12ResourceParameter(
+            parameters,
+            NVSDK_NGX_Parameter_DLSSD_DiffuseRayDirectionHitDistance,
+            params->diffuseRayDirectionHitDistance);
+        SetD3D12ResourceParameter(
+            parameters,
+            NVSDK_NGX_Parameter_DLSSD_SpecularRayDirection,
+            params->specularRayDirection);
+        SetD3D12ResourceParameter(
+            parameters,
+            NVSDK_NGX_Parameter_DLSSD_SpecularHitDistance,
+            params->specularHitDistance);
+        SetD3D12ResourceParameter(
+            parameters,
+            NVSDK_NGX_Parameter_DLSSD_SpecularRayDirectionHitDistance,
+            params->specularRayDirectionHitDistance);
+        NVSDK_NGX_Parameter_SetVoidPointer(
+            parameters,
+            NVSDK_NGX_Parameter_DLSS_WORLD_TO_VIEW_MATRIX,
+            params->worldToView.values);
+        NVSDK_NGX_Parameter_SetVoidPointer(
+            parameters,
+            NVSDK_NGX_Parameter_DLSS_VIEW_TO_CLIP_MATRIX,
+            params->viewToClip.values);
+        NVSDK_NGX_Parameter_SetF(
+            parameters,
+            NVSDK_NGX_Parameter_FrameTimeDeltaInMsec,
+            params->frameTimeDeltaMs);
+
+        NVSDK_NGX_Result result = EvaluateFeatureLocked(
+            cmdList,
+            it->second,
+            params->common);
+
+        if (!NVSDK_NGX_SUCCEED(result))
+        {
+            LogDlssResult(result, "NVSDK_NGX_D3D12_EvaluateFeature (DLSS-RR)");
         }
         break;
     }
@@ -608,30 +926,39 @@ static void UNITY_INTERFACE_API OnDLSSRenderEvent(int eventId, void* data)
     {
         DLSSDestroyFeatureParams* params = static_cast<DLSSDestroyFeatureParams*>(data);
 
+        std::lock_guard<std::mutex> lock(g_featureHandlesMutex);
         auto it = g_featureHandles.find(params->handle);
         if (it == g_featureHandles.end())
         {
             std::ostringstream oss;
             oss << "OnDLSSRenderEvent: DestroyFeature - handle " << params->handle << " not found";
             LogError(oss.str().c_str());
-            return;
         }
-
-        NVSDK_NGX_Handle* ngxHandle = it->second;
-        if (ngxHandle != nullptr)
+        else
         {
-            NVSDK_NGX_Result result = NVSDK_NGX_D3D12_ReleaseFeature(ngxHandle);
-            LogDlssResult(result, "NVSDK_NGX_D3D12_ReleaseFeature");
-
-            if (NVSDK_NGX_SUCCEED(result))
+            NVSDK_NGX_Handle* ngxHandle = it->second.ngxHandle;
+            if (ngxHandle != nullptr)
             {
-                std::ostringstream oss;
-                oss << "[DLSS] Destroyed feature, handle=" << params->handle;
-                LogMessage(oss.str().c_str());
-            }
-        }
+                NVSDK_NGX_Result result = NVSDK_NGX_D3D12_ReleaseFeature(ngxHandle);
+                LogDlssResult(result, "NVSDK_NGX_D3D12_ReleaseFeature");
 
-        g_featureHandles.erase(it);
+                if (NVSDK_NGX_SUCCEED(result))
+                {
+                    std::ostringstream oss;
+                    oss << "[DLSS] Destroyed feature, handle=" << params->handle;
+                    LogMessage(oss.str().c_str());
+                }
+            }
+
+            if (it->second.parameters != nullptr)
+            {
+                NVSDK_NGX_Result result = NVSDK_NGX_D3D12_DestroyParameters(
+                    it->second.parameters);
+                LogDlssResult(result, "NVSDK_NGX_D3D12_DestroyParameters");
+            }
+
+            g_featureHandles.erase(it);
+        }
         break;
     }
 

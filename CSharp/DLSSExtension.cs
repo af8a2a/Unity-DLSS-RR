@@ -73,6 +73,17 @@ namespace UnityEngine.Rendering.Universal
     }
 
     /// <summary>
+    /// State of an asynchronously created native DLSS feature.
+    /// </summary>
+    public enum DLSSFeatureStatus : int
+    {
+        Invalid = -1,
+        Pending = 0,
+        Ready = 1,
+        Failed = 2
+    }
+
+    /// <summary>
     /// Performance/Quality presets matching NVSDK_NGX_PerfQuality_Value.
     /// </summary>
     public enum NVSDK_NGX_PerfQuality_Value : int
@@ -141,11 +152,9 @@ namespace UnityEngine.Rendering.Universal
 
         // Event IDs for native plugin
         private const int EVENT_ID_CREATE_FEATURE = 0;
-        private const int EVENT_ID_EVALUATE_FEATURE = 1;
+        private const int EVENT_ID_EVALUATE_SUPER_RESOLUTION = 1;
         private const int EVENT_ID_DESTROY_FEATURE = 2;
-
-        // Ring buffer size
-        private const int ALLOCATOR_SIZE = 2 * 1024 * 1024; // 2MB
+        private const int EVENT_ID_EVALUATE_RAY_RECONSTRUCTION = 3;
 
         #endregion
 
@@ -288,13 +297,52 @@ namespace UnityEngine.Rendering.Universal
         }
 
         [StructLayout(LayoutKind.Sequential, Pack = 8)]
-        private struct DLSSEvaluateFeatureParams
+        private struct DLSSCommonEvaluateParams
         {
             public int handle;
-            public IntPtr parameters;
-            public int hasMatrices;
+            public IntPtr color;
+            public IntPtr output;
+            public IntPtr depth;
+            public IntPtr motionVectors;
+            public float jitterOffsetX;
+            public float jitterOffsetY;
+            public float motionVectorScaleX;
+            public float motionVectorScaleY;
+            public int reset;
+            public uint renderSubrectWidth;
+            public uint renderSubrectHeight;
+            public float preExposure;
+            public float exposureScale;
+            public int invertXAxis;
+            public int invertYAxis;
+        }
+
+        [StructLayout(LayoutKind.Sequential, Pack = 8)]
+        private struct DLSSSuperResolutionEvaluateParams
+        {
+            public DLSSCommonEvaluateParams common;
+            public IntPtr exposureTexture;
+            public IntPtr biasColorMask;
+        }
+
+        [StructLayout(LayoutKind.Sequential, Pack = 8)]
+        private struct DLSSRayReconstructionEvaluateParams
+        {
+            public DLSSCommonEvaluateParams common;
+            public IntPtr diffuseAlbedo;
+            public IntPtr specularAlbedo;
+            public IntPtr normals;
+            public IntPtr roughness;
+            public IntPtr emissive;
+            public IntPtr diffuseRayDirection;
+            public IntPtr diffuseHitDistance;
+            public IntPtr diffuseRayDirectionHitDistance;
+            public IntPtr specularRayDirection;
+            public IntPtr specularHitDistance;
+            public IntPtr specularRayDirectionHitDistance;
             public DLSSMatrix4x4 worldToView;
             public DLSSMatrix4x4 viewToClip;
+            public float frameTimeDeltaMs;
         }
 
         [StructLayout(LayoutKind.Sequential)]
@@ -319,10 +367,24 @@ namespace UnityEngine.Rendering.Universal
         private static extern int DLSS_DestroyParameters_D3D12(IntPtr pInParameters);
 
         [DllImport(DLL_NAME, CallingConvention = CALLING_CONVENTION)]
-        private static extern int DLSS_AllocateFeatureHandle();
+        private static extern int DLSS_AllocateFeatureHandle(IntPtr parameters);
 
         [DllImport(DLL_NAME, CallingConvention = CALLING_CONVENTION)]
         private static extern int DLSS_FreeFeatureHandle(int handle);
+
+        [DllImport(DLL_NAME, CallingConvention = CALLING_CONVENTION)]
+        private static extern DLSSFeatureStatus DLSS_GetFeatureHandleStatus(
+            int handle,
+            out int createResult);
+
+        [DllImport(DLL_NAME, CallingConvention = CALLING_CONVENTION)]
+        private static extern IntPtr DLSS_AllocateEventData(uint size);
+
+        [DllImport(DLL_NAME, CallingConvention = CALLING_CONVENTION)]
+        private static extern void DLSS_FreeEventData(IntPtr data);
+
+        [DllImport(DLL_NAME, CallingConvention = CALLING_CONVENTION)]
+        private static extern uint DLSS_GetEventDataSize(int eventId);
 
         [DllImport(DLL_NAME, CallingConvention = CALLING_CONVENTION)]
         private static extern IntPtr DLSS_UnityRenderEventFunc();
@@ -375,7 +437,6 @@ namespace UnityEngine.Rendering.Universal
         private bool m_Initialized = false;
         private bool m_SRSupported = false;
         private bool m_RRSupported = false;
-        private RingBufferAllocator m_Allocator;
 
         #endregion
 
@@ -473,9 +534,6 @@ namespace UnityEngine.Rendering.Universal
                 // Query capabilities
                 QueryFeatureAvailability();
 
-                // Initialize ring buffer allocator
-                m_Allocator = new RingBufferAllocator(ALLOCATOR_SIZE);
-
                 Debug.Log($"[DLSSExtension] DLSS-SR Available: {m_SRSupported}");
                 Debug.Log($"[DLSSExtension] DLSS-RR Available: {m_RRSupported}");
                 Debug.Log("[DLSSExtension] DLSS initialized successfully!");
@@ -514,9 +572,6 @@ namespace UnityEngine.Rendering.Universal
 #if DLSS_PLUGIN_INTEGRATE
             if (m_Initialized)
             {
-                m_Allocator?.Dispose();
-                m_Allocator = null;
-
                 DLSS_Shutdown_D3D12();
 
                 m_Initialized = false;
@@ -563,20 +618,27 @@ namespace UnityEngine.Rendering.Universal
 #if DLSS_PLUGIN_INTEGRATE
 
         /// <summary>
-        /// Create a DLSS feature via command buffer.
+        /// Queue asynchronous creation of a DLSS feature.
+        /// This method always consumes the supplied parameter object. The returned
+        /// handle remains Pending until the render event completes.
         /// </summary>
         public int CreateFeature(CommandBuffer cmd, NVSDK_NGX_Feature feature, IntPtr parameters)
         {
-            if (!m_Initialized)
+            if (!m_Initialized || cmd == null || parameters == IntPtr.Zero)
             {
-                Debug.LogError("[DLSSExtension] Cannot create feature: not initialized");
+                Debug.LogError("[DLSSExtension] Cannot create feature: invalid state or arguments");
+                if (parameters != IntPtr.Zero)
+                {
+                    DestroyParameters(parameters);
+                }
                 return DLSS_INVALID_FEATURE_HANDLE;
             }
 
-            int handle = DLSS_AllocateFeatureHandle();
+            int handle = DLSS_AllocateFeatureHandle(parameters);
             if (handle == DLSS_INVALID_FEATURE_HANDLE)
             {
                 Debug.LogError("[DLSSExtension] Failed to allocate feature handle");
+                DestroyParameters(parameters);
                 return DLSS_INVALID_FEATURE_HANDLE;
             }
 
@@ -587,95 +649,170 @@ namespace UnityEngine.Rendering.Universal
                 parameters = parameters
             };
 
-            IntPtr ptr = m_Allocator.Allocate(createParams);
-            if (ptr == IntPtr.Zero)
+            if (!IssuePluginEvent(
+                    cmd,
+                    EVENT_ID_CREATE_FEATURE,
+                    createParams,
+                    "CreateFeature"))
             {
-                Debug.LogError("[DLSSExtension] Failed to allocate space in ring buffer for CreateFeature");
+                // The event was never queued, so releasing the proxy is safe and
+                // also destroys the parameter object transferred above.
                 DLSS_FreeFeatureHandle(handle);
                 return DLSS_INVALID_FEATURE_HANDLE;
             }
 
-            cmd.IssuePluginEventAndData(DLSS_UnityRenderEventFunc(), EVENT_ID_CREATE_FEATURE, ptr);
             return handle;
         }
 
         /// <summary>
-        /// Evaluate (execute) a DLSS feature via command buffer.
+        /// Query whether an asynchronously created feature is pending, ready, or failed.
         /// </summary>
-        public void EvaluateFeature(CommandBuffer cmd, int handle, IntPtr parameters)
+        public DLSSFeatureStatus GetFeatureStatus(
+            int handle,
+            out NVSDK_NGX_Result createResult)
         {
-            QueueEvaluateFeature(
-                cmd,
-                handle,
-                parameters,
-                false,
-                default,
-                default);
+            var status = DLSS_GetFeatureHandleStatus(handle, out int nativeResult);
+            createResult = (NVSDK_NGX_Result)nativeResult;
+            return status;
         }
 
         /// <summary>
-        /// Evaluate DLSS Ray Reconstruction with row-major camera matrices.
-        /// The matrices are copied into the render event payload and bound as
-        /// void-pointer NGX parameters on the render thread.
+        /// Release a proxy handle that never acquired an NGX feature, including
+        /// the native-owned parameter object.
         /// </summary>
-        public void EvaluateRayReconstructionFeature(
-            CommandBuffer cmd,
-            int handle,
-            IntPtr parameters,
-            Matrix4x4 worldToView,
-            Matrix4x4 viewToClip)
+        public bool ReleaseFeatureHandle(int handle)
         {
-            QueueEvaluateFeature(
-                cmd,
-                handle,
-                parameters,
-                true,
-                DLSSMatrix4x4.FromRowMajor(worldToView),
-                DLSSMatrix4x4.FromRowMajor(viewToClip));
+            return DLSS_FreeFeatureHandle(handle) == 0;
         }
 
-        private void QueueEvaluateFeature(
+        /// <summary>
+        /// Queue an immutable DLSS Super Resolution evaluation snapshot.
+        /// </summary>
+        public bool EvaluateSuperResolutionFeature(
             CommandBuffer cmd,
             int handle,
-            IntPtr parameters,
-            bool hasMatrices,
-            DLSSMatrix4x4 worldToView,
-            DLSSMatrix4x4 viewToClip)
+            RenderTexture colorInput,
+            RenderTexture colorOutput,
+            RenderTexture depth,
+            RenderTexture motionVectors,
+            float jitterX,
+            float jitterY,
+            float motionVectorScaleX,
+            float motionVectorScaleY,
+            bool reset,
+            uint renderSubrectWidth,
+            uint renderSubrectHeight,
+            float preExposure,
+            RenderTexture exposureTexture,
+            RenderTexture biasColorMask)
         {
-            if (!m_Initialized)
+            var evaluateParams = new DLSSSuperResolutionEvaluateParams
             {
-                Debug.LogError("[DLSSExtension] Cannot evaluate feature: not initialized");
-                return;
-            }
-
-            var evalParams = new DLSSEvaluateFeatureParams
-            {
-                handle = handle,
-                parameters = parameters,
-                hasMatrices = hasMatrices ? 1 : 0,
-                worldToView = worldToView,
-                viewToClip = viewToClip
+                common = CreateCommonEvaluateParams(
+                    handle,
+                    colorInput,
+                    colorOutput,
+                    depth,
+                    motionVectors,
+                    jitterX,
+                    jitterY,
+                    motionVectorScaleX,
+                    motionVectorScaleY,
+                    reset,
+                    renderSubrectWidth,
+                    renderSubrectHeight,
+                    preExposure),
+                exposureTexture = GetNativeTexturePtr(exposureTexture),
+                biasColorMask = GetNativeTexturePtr(biasColorMask)
             };
 
-            IntPtr ptr = m_Allocator.Allocate(evalParams);
-            if (ptr == IntPtr.Zero)
-            {
-                Debug.LogError("[DLSSExtension] Failed to allocate space in ring buffer for EvaluateFeature");
-                return;
-            }
+            return IssuePluginEvent(
+                cmd,
+                EVENT_ID_EVALUATE_SUPER_RESOLUTION,
+                evaluateParams,
+                "EvaluateSuperResolution");
+        }
 
-            cmd.IssuePluginEventAndData(DLSS_UnityRenderEventFunc(), EVENT_ID_EVALUATE_FEATURE, ptr);
+        /// <summary>
+        /// Queue an immutable DLSS Ray Reconstruction evaluation snapshot.
+        /// </summary>
+        public bool EvaluateRayReconstructionFeature(
+            CommandBuffer cmd,
+            int handle,
+            RenderTexture colorInput,
+            RenderTexture colorOutput,
+            RenderTexture depth,
+            RenderTexture motionVectors,
+            RenderTexture diffuseAlbedo,
+            RenderTexture specularAlbedo,
+            RenderTexture normals,
+            RenderTexture roughness,
+            RenderTexture emissive,
+            RenderTexture diffuseRayDirection,
+            RenderTexture diffuseHitDistance,
+            RenderTexture diffuseRayDirectionHitDistance,
+            RenderTexture specularRayDirection,
+            RenderTexture specularHitDistance,
+            RenderTexture specularRayDirectionHitDistance,
+            Matrix4x4 worldToView,
+            Matrix4x4 viewToClip,
+            float jitterX,
+            float jitterY,
+            float motionVectorScaleX,
+            float motionVectorScaleY,
+            bool reset,
+            uint renderSubrectWidth,
+            uint renderSubrectHeight,
+            float frameTimeDeltaMs)
+        {
+            var evaluateParams = new DLSSRayReconstructionEvaluateParams
+            {
+                common = CreateCommonEvaluateParams(
+                    handle,
+                    colorInput,
+                    colorOutput,
+                    depth,
+                    motionVectors,
+                    jitterX,
+                    jitterY,
+                    motionVectorScaleX,
+                    motionVectorScaleY,
+                    reset,
+                    renderSubrectWidth,
+                    renderSubrectHeight,
+                    1.0f),
+                diffuseAlbedo = GetNativeTexturePtr(diffuseAlbedo),
+                specularAlbedo = GetNativeTexturePtr(specularAlbedo),
+                normals = GetNativeTexturePtr(normals),
+                roughness = GetNativeTexturePtr(roughness),
+                emissive = GetNativeTexturePtr(emissive),
+                diffuseRayDirection = GetNativeTexturePtr(diffuseRayDirection),
+                diffuseHitDistance = GetNativeTexturePtr(diffuseHitDistance),
+                diffuseRayDirectionHitDistance = GetNativeTexturePtr(diffuseRayDirectionHitDistance),
+                specularRayDirection = GetNativeTexturePtr(specularRayDirection),
+                specularHitDistance = GetNativeTexturePtr(specularHitDistance),
+                specularRayDirectionHitDistance = GetNativeTexturePtr(specularRayDirectionHitDistance),
+                worldToView = DLSSMatrix4x4.FromRowMajor(worldToView),
+                viewToClip = DLSSMatrix4x4.FromRowMajor(viewToClip),
+                frameTimeDeltaMs = frameTimeDeltaMs
+            };
+
+            return IssuePluginEvent(
+                cmd,
+                EVENT_ID_EVALUATE_RAY_RECONSTRUCTION,
+                evaluateParams,
+                "EvaluateRayReconstruction");
         }
 
         /// <summary>
         /// Destroy a DLSS feature via command buffer.
         /// </summary>
-        public void DestroyFeature(CommandBuffer cmd, int handle)
+        public bool DestroyFeature(CommandBuffer cmd, int handle)
         {
             if (!m_Initialized)
             {
                 Debug.LogError("[DLSSExtension] Cannot destroy feature: not initialized");
-                return;
+                return false;
             }
 
             var destroyParams = new DLSSDestroyFeatureParams
@@ -683,14 +820,112 @@ namespace UnityEngine.Rendering.Universal
                 handle = handle
             };
 
-            IntPtr ptr = m_Allocator.Allocate(destroyParams);
-            if (ptr == IntPtr.Zero)
+            return IssuePluginEvent(
+                cmd,
+                EVENT_ID_DESTROY_FEATURE,
+                destroyParams,
+                "DestroyFeature");
+        }
+
+        private static DLSSCommonEvaluateParams CreateCommonEvaluateParams(
+            int handle,
+            RenderTexture colorInput,
+            RenderTexture colorOutput,
+            RenderTexture depth,
+            RenderTexture motionVectors,
+            float jitterX,
+            float jitterY,
+            float motionVectorScaleX,
+            float motionVectorScaleY,
+            bool reset,
+            uint renderSubrectWidth,
+            uint renderSubrectHeight,
+            float preExposure)
+        {
+            return new DLSSCommonEvaluateParams
             {
-                Debug.LogError("[DLSSExtension] Failed to allocate space in ring buffer for DestroyFeature");
-                return;
+                handle = handle,
+                color = GetNativeTexturePtr(colorInput),
+                output = GetNativeTexturePtr(colorOutput),
+                depth = GetNativeTexturePtr(depth),
+                motionVectors = GetNativeTexturePtr(motionVectors),
+                jitterOffsetX = jitterX,
+                jitterOffsetY = jitterY,
+                motionVectorScaleX = motionVectorScaleX,
+                motionVectorScaleY = motionVectorScaleY,
+                reset = reset ? 1 : 0,
+                renderSubrectWidth = renderSubrectWidth,
+                renderSubrectHeight = renderSubrectHeight,
+                preExposure = preExposure,
+                exposureScale = 1.0f,
+                invertXAxis = 0,
+                invertYAxis = 1
+            };
+        }
+
+        private static IntPtr GetNativeTexturePtr(RenderTexture texture)
+        {
+            return texture != null ? texture.GetNativeTexturePtr() : IntPtr.Zero;
+        }
+
+        private bool IssuePluginEvent<T>(
+            CommandBuffer cmd,
+            int eventId,
+            T eventData,
+            string operation)
+            where T : struct
+        {
+            if (!m_Initialized || cmd == null)
+            {
+                Debug.LogError($"[DLSSExtension] Cannot queue {operation}: invalid state or command buffer");
+                return false;
             }
 
-            cmd.IssuePluginEventAndData(DLSS_UnityRenderEventFunc(), EVENT_ID_DESTROY_FEATURE, ptr);
+            IntPtr dataPointer = IntPtr.Zero;
+
+            try
+            {
+                int dataSize = Marshal.SizeOf(eventData);
+                uint nativeDataSize = DLSS_GetEventDataSize(eventId);
+                if (nativeDataSize != (uint)dataSize)
+                {
+                    Debug.LogError(
+                        $"[DLSSExtension] {operation} ABI mismatch: " +
+                        $"managed={dataSize}, native={nativeDataSize}");
+                    return false;
+                }
+
+                dataPointer = DLSS_AllocateEventData((uint)dataSize);
+                if (dataPointer == IntPtr.Zero)
+                {
+                    Debug.LogError($"[DLSSExtension] Failed to allocate event data for {operation}");
+                    return false;
+                }
+
+                Marshal.StructureToPtr(eventData, dataPointer, false);
+                cmd.IssuePluginEventAndData(
+                    DLSS_UnityRenderEventFunc(),
+                    eventId,
+                    dataPointer);
+                return true;
+            }
+            catch (Exception exception)
+            {
+                if (dataPointer != IntPtr.Zero)
+                {
+                    try
+                    {
+                        DLSS_FreeEventData(dataPointer);
+                    }
+                    catch
+                    {
+                        // The plugin may be missing or ABI-incompatible; preserve
+                        // the original queueing error for the caller.
+                    }
+                }
+                Debug.LogError($"[DLSSExtension] Failed to queue {operation}: {exception.Message}");
+                return false;
+            }
         }
 
         /// <summary>

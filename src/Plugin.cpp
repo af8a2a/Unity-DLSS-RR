@@ -44,8 +44,9 @@ static void ConfigureD3D12PluginEvent(int eventId) {
 
 static void ConfigureD3D12PluginEvents() {
     ConfigureD3D12PluginEvent(DLSS_Event_CreateFeature);
-    ConfigureD3D12PluginEvent(DLSS_Event_EvaluateFeature);
+    ConfigureD3D12PluginEvent(DLSS_Event_EvaluateSuperResolution);
     ConfigureD3D12PluginEvent(DLSS_Event_DestroyFeature);
+    ConfigureD3D12PluginEvent(DLSS_Event_EvaluateRayReconstruction);
 }
 
 static void HandleDeviceEvent(UnityGfxDeviceEventType eventType) {

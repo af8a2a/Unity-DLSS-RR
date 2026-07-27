@@ -67,9 +67,19 @@ typedef enum DLSSNGXFeature
 typedef enum DLSSRenderEventId
 {
     DLSS_Event_CreateFeature = 0,
-    DLSS_Event_EvaluateFeature = 1,
-    DLSS_Event_DestroyFeature = 2
+    DLSS_Event_EvaluateSuperResolution = 1,
+    DLSS_Event_DestroyFeature = 2,
+    DLSS_Event_EvaluateRayReconstruction = 3
 } DLSSRenderEventId;
+
+/// State of an asynchronously created NGX feature.
+typedef enum DLSSFeatureStatus
+{
+    DLSS_FeatureStatus_Invalid = -1,
+    DLSS_FeatureStatus_Pending = 0,
+    DLSS_FeatureStatus_Ready = 1,
+    DLSS_FeatureStatus_Failed = 2
+} DLSSFeatureStatus;
 
 /// Parameters for create feature render event
 typedef struct DLSSCreateFeatureParams
@@ -85,24 +95,59 @@ typedef struct DLSSMatrix4x4
     float values[16];
 } DLSSMatrix4x4;
 
-/// Parameters for evaluate feature render event
-typedef struct DLSSEvaluateFeatureParams
+/// Parameters shared by DLSS-SR and DLSS-RR evaluation events.
+typedef struct DLSSCommonEvaluateParams
 {
     int handle;
-    void* parameters;   // NVSDK_NGX_Parameter*
-    int hasMatrices;    // Non-zero for DLSS-RR evaluation
+    void* color;
+    void* output;
+    void* depth;
+    void* motionVectors;
+    float jitterOffsetX;
+    float jitterOffsetY;
+    float motionVectorScaleX;
+    float motionVectorScaleY;
+    int reset;
+    unsigned int renderSubrectWidth;
+    unsigned int renderSubrectHeight;
+    float preExposure;
+    float exposureScale;
+    int invertXAxis;
+    int invertYAxis;
+} DLSSCommonEvaluateParams;
+
+/// Immutable event payload for DLSS Super Resolution evaluation.
+typedef struct DLSSSuperResolutionEvaluateParams
+{
+    DLSSCommonEvaluateParams common;
+    void* exposureTexture;
+    void* biasColorMask;
+} DLSSSuperResolutionEvaluateParams;
+
+/// Immutable event payload for DLSS Ray Reconstruction evaluation.
+typedef struct DLSSRayReconstructionEvaluateParams
+{
+    DLSSCommonEvaluateParams common;
+    void* diffuseAlbedo;
+    void* specularAlbedo;
+    void* normals;
+    void* roughness;
+    void* emissive;
+    void* diffuseRayDirection;
+    void* diffuseHitDistance;
+    void* diffuseRayDirectionHitDistance;
+    void* specularRayDirection;
+    void* specularHitDistance;
+    void* specularRayDirectionHitDistance;
     DLSSMatrix4x4 worldToView;
     DLSSMatrix4x4 viewToClip;
-} DLSSEvaluateFeatureParams;
+    float frameTimeDeltaMs;
+} DLSSRayReconstructionEvaluateParams;
 
 #ifdef __cplusplus
 static_assert(sizeof(DLSSMatrix4x4) == 16 * sizeof(float));
-static_assert(
-    offsetof(DLSSEvaluateFeatureParams, worldToView) ==
-    offsetof(DLSSEvaluateFeatureParams, hasMatrices) + sizeof(int));
-static_assert(
-    offsetof(DLSSEvaluateFeatureParams, viewToClip) ==
-    offsetof(DLSSEvaluateFeatureParams, worldToView) + sizeof(DLSSMatrix4x4));
+static_assert(offsetof(DLSSRayReconstructionEvaluateParams, viewToClip) ==
+    offsetof(DLSSRayReconstructionEvaluateParams, worldToView) + sizeof(DLSSMatrix4x4));
 #endif
 
 /// Parameters for destroy feature render event
@@ -198,20 +243,43 @@ int UNITY_INTERFACE_EXPORT UNITY_INTERFACE_API DLSS_Parameter_GetVoidPointer(
 
 //--- Feature Handle Management ---
 
-/// Allocate a feature handle for use with render events.
+/// Allocate a feature handle and transfer ownership of its NGX parameters.
+/// @param parameters Parameters used to create and evaluate the feature.
 /// @return Handle ID, or DLSS_INVALID_FEATURE_HANDLE on failure.
-int UNITY_INTERFACE_EXPORT UNITY_INTERFACE_API DLSS_AllocateFeatureHandle(void);
+int UNITY_INTERFACE_EXPORT UNITY_INTERFACE_API DLSS_AllocateFeatureHandle(
+    void* parameters);
 
-/// Free a feature handle.
+/// Free a feature handle that has no live NGX feature and destroy its parameters.
 /// @param handle Handle to free.
 /// @return 0 on success, -1 on failure.
 int UNITY_INTERFACE_EXPORT UNITY_INTERFACE_API DLSS_FreeFeatureHandle(int handle);
+
+/// Query the state and NGX result of an asynchronously created feature.
+/// @param handle Feature handle returned by DLSS_AllocateFeatureHandle.
+/// @param pCreateResult Receives the NGX create result when Ready or Failed.
+/// @return DLSSFeatureStatus.
+int UNITY_INTERFACE_EXPORT UNITY_INTERFACE_API DLSS_GetFeatureHandleStatus(
+    int handle,
+    int* pCreateResult);
+
+//--- Event Payload Memory ---
+
+/// Allocate native-owned memory for one IssuePluginEventAndData payload.
+UNITY_INTERFACE_EXPORT void* UNITY_INTERFACE_API DLSS_AllocateEventData(
+    unsigned int size);
+
+/// Free event payload memory if issuing the plugin event fails.
+void UNITY_INTERFACE_EXPORT UNITY_INTERFACE_API DLSS_FreeEventData(void* data);
+
+/// Get the native ABI size for an event payload.
+unsigned int UNITY_INTERFACE_EXPORT UNITY_INTERFACE_API DLSS_GetEventDataSize(
+    int eventId);
 
 //--- Render Event ---
 
 /// Get the render event callback function for use with IssuePluginEventAndData.
 /// Use with DLSSRenderEventId values as eventId.
-/// Data should be pointer to DLSSCreateFeatureParams/DLSSEvaluateFeatureParams/DLSSDestroyFeatureParams.
+/// Data must come from DLSS_AllocateEventData and is released by the callback.
 /// @return UnityRenderingEventAndData function pointer.
 UnityRenderingEventAndData UNITY_INTERFACE_EXPORT UNITY_INTERFACE_API DLSS_UnityRenderEventFunc(void);
 

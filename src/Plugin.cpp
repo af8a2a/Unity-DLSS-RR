@@ -56,6 +56,10 @@ static void HandleDeviceEvent(UnityGfxDeviceEventType eventType) {
                 g_renderer = g_unityGraphics->GetRenderer();
             }
             if (g_renderer == kUnityGfxRendererD3D12) {
+                if (!g_unityGraphics_D3D12 && g_unityInterfaces) {
+                    g_unityGraphics_D3D12 =
+                        g_unityInterfaces->Get<IUnityGraphicsD3D12v8>();
+                }
                 ConfigureD3D12PluginEvents();
             }
             // Note: DLSS_Init_with_ProjectID_D3D12() is called explicitly from C# after device init
@@ -85,12 +89,17 @@ static void UNITY_INTERFACE_API OnGraphicsDeviceEvent(UnityGfxDeviceEventType ev
 // Called by Unity to load the plugin and provide the interfaces pointer
 UNITY_INTERFACE_EXPORT void UNITY_INTERFACE_API UnityPluginLoad(IUnityInterfaces *unityInterfaces) {
     g_unityInterfaces = unityInterfaces;
-    g_unityGraphics = g_unityInterfaces->Get<IUnityGraphics>();
-    g_unityGraphics->RegisterDeviceEventCallback(OnGraphicsDeviceEvent);
-    g_unityGraphics_D3D12 = g_unityInterfaces->Get<IUnityGraphicsD3D12v8>();
-    g_unityLog = g_unityInterfaces->Get<IUnityLog>();
-    ConfigureD3D12PluginEvents();
+    if (!g_unityInterfaces) {
+        return;
+    }
 
+    g_unityGraphics = g_unityInterfaces->Get<IUnityGraphics>();
+    g_unityLog = g_unityInterfaces->Get<IUnityLog>();
+    if (!g_unityGraphics) {
+        return;
+    }
+
+    g_unityGraphics->RegisterDeviceEventCallback(OnGraphicsDeviceEvent);
 
 #if SUPPORT_VULKAN
     if (s_Graphics->GetRenderer() == kUnityGfxRendererNull) {
@@ -105,6 +114,14 @@ UNITY_INTERFACE_EXPORT void UNITY_INTERFACE_API UnityPluginLoad(IUnityInterfaces
 
 // Called by Unity when the plugin is unloaded
 UNITY_INTERFACE_EXPORT void UNITY_INTERFACE_API UnityPluginUnload() {
-    g_unityGraphics->UnregisterDeviceEventCallback(OnGraphicsDeviceEvent);
+    if (g_unityGraphics) {
+        g_unityGraphics->UnregisterDeviceEventCallback(OnGraphicsDeviceEvent);
+    }
+
+    g_unityGraphics_D3D12 = nullptr;
+    g_unityGraphics = nullptr;
+    g_unityLog = nullptr;
+    g_unityInterfaces = nullptr;
+    g_renderer = kUnityGfxRendererNull;
 }
 }

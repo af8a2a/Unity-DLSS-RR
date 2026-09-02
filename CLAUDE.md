@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Overview
 
-Unity Native Plugin (C++ DLL) providing NVIDIA DLSS integration for Unity. Supports DLSS Super Resolution, Frame Generation, and Dynamic Super Resolution via the NGX SDK.
+Unity Native Plugin (C++ DLL) providing NVIDIA DLSS integration for Unity. Supports DLSS Super Resolution, Ray Reconstruction, and optional DLSS 5 Neural Rendering via the NGX SDK.
 
 ## Build Commands
 
@@ -51,6 +51,8 @@ Headers in `External/NVIDIA-DLSS/include/`:
 - `nvsdk_ngx.h` - Main NGX API
 - `nvsdk_ngx_helpers.h` - Helper functions
 - `nvsdk_ngx_defs_dlssd.h` / `nvsdk_ngx_defs_dlssg.h` - DLSS-D and Frame Gen definitions
+- DLSS 5 Neural Rendering is dynamically loaded from the separately supplied
+  `nvngx_dlssnr.dll`; configure `DLSSNR_DLL` in CMake to deploy it
 
 ## Notes
 

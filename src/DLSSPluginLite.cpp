@@ -14,12 +14,14 @@
 #include <mutex>
 #include <unordered_map>
 #include <sstream>
+#include <vector>
 
 // NGX SDK headers
 #include <nvsdk_ngx.h>
 #include <nvsdk_ngx_defs.h>
 #include <nvsdk_ngx_defs_dlssd.h>
 #include <nvsdk_ngx_params.h>
+#include "DLSSNeuralRendering.h"
 #include "DLSSPluginLite.h"
 #include "IUnityGraphicsD3D12.h"
 #include "IUnityLog.h"
@@ -141,6 +143,8 @@ static const char* GetFeatureString(NVSDK_NGX_Feature feature)
             return "DLSS-RR";
         case NVSDK_NGX_Feature_FrameGeneration:
             return "FrameGeneration";
+        case static_cast<NVSDK_NGX_Feature>(DLSS_NGX_Feature_NeuralRendering):
+            return "DLSS 5 Neural Rendering";
         default:
             return "Unknown";
     }
@@ -182,10 +186,136 @@ struct DLSSFeatureHandleRecord
     DLSSNGXFeature feature = DLSS_NGX_Feature_SuperSampling;
     DLSSFeatureStatus status = DLSS_FeatureStatus_Pending;
     int createResult = 0;
+    int lastEvaluateResult = static_cast<int>(NVSDK_NGX_Result_Success);
+    uint64_t lastUseFenceValue = 0;
+    unsigned int nrInputWidth = 0;
+    unsigned int nrInputHeight = 0;
+    unsigned int nrOutputWidth = 0;
+    unsigned int nrOutputHeight = 0;
+    int nrPreset = 0;
+    int nrUpscaling = 0;
+};
+
+struct DLSSPendingNeuralRenderingRelease
+{
+    NVSDK_NGX_Handle* ngxHandle = nullptr;
+    NVSDK_NGX_Parameter* parameters = nullptr;
+    uint64_t fenceValue = 0;
 };
 
 static std::mutex g_featureHandlesMutex;
 static std::unordered_map<int, DLSSFeatureHandleRecord> g_featureHandles;
+static std::vector<DLSSPendingNeuralRenderingRelease> g_pendingNeuralRenderingReleases;
+
+static bool IsNeuralRenderingFeature(const DLSSFeatureHandleRecord& record)
+{
+    return record.feature == DLSS_NGX_Feature_NeuralRendering;
+}
+
+static uint64_t GetCompletedFrameFenceValue()
+{
+    if (!g_unityGraphics_D3D12)
+        return 0;
+
+    ID3D12Fence* fence = g_unityGraphics_D3D12->GetFrameFence();
+    return fence ? fence->GetCompletedValue() : 0;
+}
+
+static void DestroyParameterMap(NVSDK_NGX_Parameter* parameters)
+{
+    if (!parameters)
+        return;
+
+    const NVSDK_NGX_Result result =
+        NVSDK_NGX_D3D12_DestroyParameters(parameters);
+    LogDlssResult(result, "NVSDK_NGX_D3D12_DestroyParameters");
+}
+
+static void ReleaseNeuralRenderingObjects(
+    NVSDK_NGX_Handle* ngxHandle,
+    NVSDK_NGX_Parameter* parameters)
+{
+    if (ngxHandle)
+    {
+        const int result = DLSSNR_ReleaseFeature(ngxHandle);
+        LogDlssResult(
+            static_cast<NVSDK_NGX_Result>(result),
+            "NVSDK_NGX_D3D12_ReleaseFeature (DLSS-NR)");
+    }
+
+    DestroyParameterMap(parameters);
+}
+
+static void FlushPendingNeuralRenderingReleases(bool force)
+{
+    if (g_pendingNeuralRenderingReleases.empty())
+        return;
+
+    const uint64_t completedFence = force ? 0 : GetCompletedFrameFenceValue();
+    size_t writeIndex = 0;
+    for (size_t readIndex = 0;
+         readIndex < g_pendingNeuralRenderingReleases.size();
+         ++readIndex)
+    {
+        const DLSSPendingNeuralRenderingRelease pending =
+            g_pendingNeuralRenderingReleases[readIndex];
+        if (force || pending.fenceValue == 0 || completedFence >= pending.fenceValue)
+        {
+            ReleaseNeuralRenderingObjects(pending.ngxHandle, pending.parameters);
+            continue;
+        }
+
+        g_pendingNeuralRenderingReleases[writeIndex++] = pending;
+    }
+
+    g_pendingNeuralRenderingReleases.resize(writeIndex);
+}
+
+static void ReleaseNeuralRenderingRecord(
+    DLSSFeatureHandleRecord& record,
+    bool force)
+{
+    if (!record.ngxHandle)
+    {
+        DestroyParameterMap(record.parameters);
+        record.parameters = nullptr;
+        return;
+    }
+
+    if (!force && record.lastUseFenceValue != 0 &&
+        GetCompletedFrameFenceValue() < record.lastUseFenceValue)
+    {
+        g_pendingNeuralRenderingReleases.push_back(
+            {record.ngxHandle, record.parameters, record.lastUseFenceValue});
+    }
+    else
+    {
+        ReleaseNeuralRenderingObjects(record.ngxHandle, record.parameters);
+    }
+
+    record.ngxHandle = nullptr;
+    record.parameters = nullptr;
+}
+
+static int AllocateFeatureHandleLocked(
+    NVSDK_NGX_Parameter* parameters,
+    DLSSNGXFeature feature)
+{
+    for (uint32_t attempt = 0; attempt < 1024; ++attempt)
+    {
+        const int handle = static_cast<int>(g_featureHandleCounter++ % 1024);
+        if (g_featureHandles.find(handle) != g_featureHandles.end())
+            continue;
+
+        DLSSFeatureHandleRecord record = {};
+        record.parameters = parameters;
+        record.feature = feature;
+        g_featureHandles.emplace(handle, record);
+        return handle;
+    }
+
+    return DLSS_INVALID_FEATURE_HANDLE;
+}
 
 //------------------------------------------------------------------------------
 // Initialization/Shutdown
@@ -234,6 +364,10 @@ int UNITY_INTERFACE_EXPORT UNITY_INTERFACE_API DLSS_Init_with_ProjectID_D3D12(
     if (NVSDK_NGX_SUCCEED(result))
     {
         LogMessage("[DLSS] Initialized successfully");
+        // Neural Rendering uses a separately distributed, dynamically loaded
+        // feature-18 runtime. Its absence or initialization failure must not
+        // change the result of regular NGX initialization.
+        DLSSNR_InitializeRuntime(device);
     }
 
     return static_cast<int>(result);
@@ -254,6 +388,12 @@ int UNITY_INTERFACE_EXPORT UNITY_INTERFACE_API DLSS_Shutdown_D3D12(void)
         // Release all feature handles
         for (auto& pair : g_featureHandles)
         {
+            if (IsNeuralRenderingFeature(pair.second))
+            {
+                ReleaseNeuralRenderingRecord(pair.second, true);
+                continue;
+            }
+
             if (pair.second.ngxHandle != nullptr)
             {
                 NVSDK_NGX_D3D12_ReleaseFeature(pair.second.ngxHandle);
@@ -264,8 +404,13 @@ int UNITY_INTERFACE_EXPORT UNITY_INTERFACE_API DLSS_Shutdown_D3D12(void)
             }
         }
         g_featureHandles.clear();
+        FlushPendingNeuralRenderingReleases(true);
         g_featureHandleCounter = 0;
     }
+
+    // Release feature-18 objects before shutting down its runtime, and shut
+    // that runtime down before the process NGX core that owns parameter maps.
+    DLSSNR_ShutdownRuntime();
 
     NVSDK_NGX_Result result = NVSDK_NGX_D3D12_Shutdown1(device);
     LogDlssResult(result, "NVSDK_NGX_D3D12_Shutdown1");
@@ -491,21 +636,63 @@ int UNITY_INTERFACE_EXPORT UNITY_INTERFACE_API DLSS_AllocateFeatureHandle(
 
     std::lock_guard<std::mutex> lock(g_featureHandlesMutex);
 
-    // Find the next available handle (wrap around at 1024).
-    for (uint32_t attempt = 0; attempt < 1024; ++attempt)
-    {
-        int handle = static_cast<int>(g_featureHandleCounter++ % 1024);
-        if (g_featureHandles.find(handle) == g_featureHandles.end())
-        {
-            DLSSFeatureHandleRecord record = {};
-            record.parameters = static_cast<NVSDK_NGX_Parameter*>(parameters);
-            g_featureHandles.emplace(handle, record);
-            return handle;
-        }
-    }
+    const int handle = AllocateFeatureHandleLocked(
+        static_cast<NVSDK_NGX_Parameter*>(parameters),
+        DLSS_NGX_Feature_SuperSampling);
+    if (handle != DLSS_INVALID_FEATURE_HANDLE)
+        return handle;
 
     LogError("DLSS_AllocateFeatureHandle: no handles available");
     return DLSS_INVALID_FEATURE_HANDLE;
+}
+
+int UNITY_INTERFACE_EXPORT UNITY_INTERFACE_API DLSS_AllocateNeuralRenderingHandle(void)
+{
+    if (!DLSSNR_IsRuntimeAvailable())
+    {
+        LogError("DLSS_AllocateNeuralRenderingHandle: runtime is unavailable");
+        return DLSS_INVALID_FEATURE_HANDLE;
+    }
+
+    NVSDK_NGX_Parameter* parameters = nullptr;
+    const NVSDK_NGX_Result result =
+        NVSDK_NGX_D3D12_AllocateParameters(&parameters);
+    if (NVSDK_NGX_FAILED(result) || !parameters)
+    {
+        LogDlssResult(result, "NVSDK_NGX_D3D12_AllocateParameters (DLSS-NR)");
+        return DLSS_INVALID_FEATURE_HANDLE;
+    }
+
+    std::lock_guard<std::mutex> lock(g_featureHandlesMutex);
+    const int handle = AllocateFeatureHandleLocked(
+        parameters,
+        DLSS_NGX_Feature_NeuralRendering);
+    if (handle == DLSS_INVALID_FEATURE_HANDLE)
+    {
+        DestroyParameterMap(parameters);
+        LogError("DLSS_AllocateNeuralRenderingHandle: no handles available");
+    }
+    return handle;
+}
+
+int UNITY_INTERFACE_EXPORT UNITY_INTERFACE_API DLSS_IsNeuralRenderingAvailable(void)
+{
+    return DLSSNR_IsRuntimeAvailable() ? 1 : 0;
+}
+
+int UNITY_INTERFACE_EXPORT UNITY_INTERFACE_API DLSS_GetNeuralRenderingInitResult(void)
+{
+    return DLSSNR_GetRuntimeInitResult();
+}
+
+int UNITY_INTERFACE_EXPORT UNITY_INTERFACE_API DLSS_GetNeuralRenderingLastCreateResult(void)
+{
+    return DLSSNR_GetLastCreateResult();
+}
+
+int UNITY_INTERFACE_EXPORT UNITY_INTERFACE_API DLSS_GetNeuralRenderingLastEvaluateResult(void)
+{
+    return DLSSNR_GetLastEvaluateResult();
 }
 
 int UNITY_INTERFACE_EXPORT UNITY_INTERFACE_API DLSS_FreeFeatureHandle(int handle)
@@ -585,6 +772,10 @@ unsigned int UNITY_INTERFACE_EXPORT UNITY_INTERFACE_API DLSS_GetEventDataSize(
         return static_cast<unsigned int>(sizeof(DLSSDestroyFeatureParams));
     case DLSS_Event_EvaluateRayReconstruction:
         return static_cast<unsigned int>(sizeof(DLSSRayReconstructionEvaluateParams));
+    case DLSS_Event_CreateNeuralRendering:
+        return static_cast<unsigned int>(sizeof(DLSSNeuralRenderingCreateParams));
+    case DLSS_Event_EvaluateNeuralRendering:
+        return static_cast<unsigned int>(sizeof(DLSSNeuralRenderingEvaluateParams));
     default:
         return 0;
     }
@@ -704,13 +895,19 @@ static void UNITY_INTERFACE_API OnDLSSRenderEvent(int eventId, void* data)
 
     std::unique_ptr<void, EventDataDeleter> ownedData(data);
 
+    {
+        std::lock_guard<std::mutex> lock(g_featureHandlesMutex);
+        FlushPendingNeuralRenderingReleases(false);
+    }
+
     ID3D12GraphicsCommandList* cmdList = nullptr;
     if (eventId != DLSS_Event_DestroyFeature)
     {
         if (!g_unityGraphics_D3D12)
         {
             LogError("OnDLSSRenderEvent: Unity D3D12 interface not available");
-            if (eventId == DLSS_Event_CreateFeature)
+            if (eventId == DLSS_Event_CreateFeature ||
+                eventId == DLSS_Event_CreateNeuralRendering)
             {
                 MarkCreateFeatureFailed(data, NVSDK_NGX_Result_FAIL_PlatformError);
             }
@@ -724,7 +921,8 @@ static void UNITY_INTERFACE_API OnDLSSRenderEvent(int eventId, void* data)
             !recordingState.commandList)
         {
             LogError("OnDLSSRenderEvent: Failed to get command list from Unity");
-            if (eventId == DLSS_Event_CreateFeature)
+            if (eventId == DLSS_Event_CreateFeature ||
+                eventId == DLSS_Event_CreateNeuralRendering)
             {
                 MarkCreateFeatureFailed(data, NVSDK_NGX_Result_FAIL_PlatformError);
             }
@@ -743,7 +941,8 @@ static void UNITY_INTERFACE_API OnDLSSRenderEvent(int eventId, void* data)
         auto it = g_featureHandles.find(params->handle);
         if (it == g_featureHandles.end() ||
             it->second.status != DLSS_FeatureStatus_Pending ||
-            it->second.parameters != params->parameters)
+            it->second.parameters != params->parameters ||
+            params->feature == DLSS_NGX_Feature_NeuralRendering)
         {
             LogError("OnDLSSRenderEvent: CreateFeature - invalid handle or parameter ownership");
             return;
@@ -787,6 +986,74 @@ static void UNITY_INTERFACE_API OnDLSSRenderEvent(int eventId, void* data)
             std::ostringstream oss;
             oss << "[DLSS] Created " << GetFeatureString(feature) << " feature, handle=" << params->handle;
             LogMessage(oss.str().c_str());
+        }
+        break;
+    }
+
+    case DLSS_Event_CreateNeuralRendering:
+    {
+        DLSSNeuralRenderingCreateParams* params =
+            static_cast<DLSSNeuralRenderingCreateParams*>(data);
+        std::lock_guard<std::mutex> lock(g_featureHandlesMutex);
+        auto it = g_featureHandles.find(params->handle);
+        if (it == g_featureHandles.end() ||
+            it->second.status != DLSS_FeatureStatus_Pending ||
+            !IsNeuralRenderingFeature(it->second) ||
+            !it->second.parameters ||
+            params->inputWidth == 0 || params->inputHeight == 0 ||
+            params->outputWidth == 0 || params->outputHeight == 0 ||
+            (params->upscaling != 0 &&
+             (params->outputWidth != params->inputWidth * 2u ||
+              params->outputHeight != params->inputHeight * 2u)) ||
+            (params->upscaling == 0 &&
+             (params->outputWidth != params->inputWidth ||
+              params->outputHeight != params->inputHeight)))
+        {
+            LogError("OnDLSSRenderEvent: CreateNeuralRendering - invalid handle or dimensions");
+            if (it != g_featureHandles.end())
+            {
+                it->second.status = DLSS_FeatureStatus_Failed;
+                it->second.createResult =
+                    static_cast<int>(NVSDK_NGX_Result_FAIL_InvalidParameter);
+            }
+            return;
+        }
+
+        NVSDK_NGX_Handle* ngxHandle = nullptr;
+        const int nativeResult = DLSSNR_CreateFeature(
+            cmdList,
+            it->second.parameters,
+            *params,
+            &ngxHandle);
+        NVSDK_NGX_Result result = static_cast<NVSDK_NGX_Result>(nativeResult);
+        if (NVSDK_NGX_SUCCEED(result) && !ngxHandle)
+            result = NVSDK_NGX_Result_FAIL_FeatureNotFound;
+
+        it->second.createResult = static_cast<int>(result);
+        it->second.nrInputWidth = params->inputWidth;
+        it->second.nrInputHeight = params->inputHeight;
+        it->second.nrOutputWidth = params->outputWidth;
+        it->second.nrOutputHeight = params->outputHeight;
+        it->second.nrPreset = params->preset;
+        it->second.nrUpscaling = params->upscaling;
+
+        if (NVSDK_NGX_SUCCEED(result) && ngxHandle)
+        {
+            it->second.ngxHandle = ngxHandle;
+            it->second.status = DLSS_FeatureStatus_Ready;
+            std::ostringstream oss;
+            oss << "[DLSS-NR] Created feature 18, handle=" << params->handle
+                << ", " << params->inputWidth << "x" << params->inputHeight
+                << " -> " << params->outputWidth << "x" << params->outputHeight;
+            LogMessage(oss.str().c_str());
+        }
+        else
+        {
+            if (ngxHandle)
+                DLSSNR_ReleaseFeature(ngxHandle);
+            it->second.ngxHandle = nullptr;
+            it->second.status = DLSS_FeatureStatus_Failed;
+            LogDlssResult(result, "NVSDK_NGX_D3D12_CreateFeature (DLSS-NR)");
         }
         break;
     }
@@ -926,6 +1193,67 @@ static void UNITY_INTERFACE_API OnDLSSRenderEvent(int eventId, void* data)
         break;
     }
 
+    case DLSS_Event_EvaluateNeuralRendering:
+    {
+        DLSSNeuralRenderingEvaluateParams* params =
+            static_cast<DLSSNeuralRenderingEvaluateParams*>(data);
+        std::lock_guard<std::mutex> lock(g_featureHandlesMutex);
+        auto it = g_featureHandles.find(params->handle);
+        if (it == g_featureHandles.end() ||
+            it->second.status != DLSS_FeatureStatus_Ready ||
+            !IsNeuralRenderingFeature(it->second) ||
+            !it->second.ngxHandle || !it->second.parameters ||
+            !params->color || !params->output || !params->depth ||
+            !params->motionVectors || params->color == params->output ||
+            params->inputWidth != it->second.nrInputWidth ||
+            params->inputHeight != it->second.nrInputHeight ||
+            params->outputWidth != it->second.nrOutputWidth ||
+            params->outputHeight != it->second.nrOutputHeight)
+        {
+            LogError("OnDLSSRenderEvent: EvaluateNeuralRendering - invalid handle, resources, or dimensions");
+            return;
+        }
+
+        ID3D12Resource* color = static_cast<ID3D12Resource*>(params->color);
+        ID3D12Resource* output = static_cast<ID3D12Resource*>(params->output);
+        ID3D12Resource* depth = static_cast<ID3D12Resource*>(params->depth);
+        ID3D12Resource* motionVectors =
+            static_cast<ID3D12Resource*>(params->motionVectors);
+
+        g_unityGraphics_D3D12->RequestResourceState(
+            color, D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE);
+        g_unityGraphics_D3D12->RequestResourceState(
+            depth, D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE);
+        g_unityGraphics_D3D12->RequestResourceState(
+            motionVectors, D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE);
+        g_unityGraphics_D3D12->RequestResourceState(
+            output, D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
+
+        const int nativeResult = DLSSNR_EvaluateFeature(
+            cmdList,
+            it->second.ngxHandle,
+            it->second.parameters,
+            *params);
+        const NVSDK_NGX_Result result =
+            static_cast<NVSDK_NGX_Result>(nativeResult);
+        it->second.lastEvaluateResult = nativeResult;
+        it->second.lastUseFenceValue =
+            g_unityGraphics_D3D12->GetNextFrameFenceValue();
+
+        g_unityGraphics_D3D12->NotifyResourceState(
+            color, D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE, false);
+        g_unityGraphics_D3D12->NotifyResourceState(
+            depth, D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE, false);
+        g_unityGraphics_D3D12->NotifyResourceState(
+            motionVectors, D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE, false);
+        g_unityGraphics_D3D12->NotifyResourceState(
+            output, D3D12_RESOURCE_STATE_UNORDERED_ACCESS, true);
+
+        if (NVSDK_NGX_FAILED(result))
+            LogDlssResult(result, "NVSDK_NGX_D3D12_EvaluateFeature (DLSS-NR)");
+        break;
+    }
+
     case DLSS_Event_DestroyFeature:
     {
         DLSSDestroyFeatureParams* params = static_cast<DLSSDestroyFeatureParams*>(data);
@@ -940,6 +1268,13 @@ static void UNITY_INTERFACE_API OnDLSSRenderEvent(int eventId, void* data)
         }
         else
         {
+            if (IsNeuralRenderingFeature(it->second))
+            {
+                ReleaseNeuralRenderingRecord(it->second, false);
+                g_featureHandles.erase(it);
+                break;
+            }
+
             NVSDK_NGX_Handle* ngxHandle = it->second.ngxHandle;
             if (ngxHandle != nullptr)
             {

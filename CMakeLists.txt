@@ -26,6 +26,8 @@ add_library(UnityDLSS SHARED
         src/Plugin.cpp
         src/DLSSPluginLite.h
         src/DLSSPluginLite.cpp
+        src/DLSSNeuralRendering.h
+        src/DLSSNeuralRendering.cpp
 )
 
 target_include_directories(UnityDLSS
@@ -126,6 +128,28 @@ if (WIN32)
     else()
         message(WARNING "DLSS SDK not found. Run fetch_dlss.ps1 to download it.")
         message(STATUS "  Expected location: ${DLSS_DIR}")
+    endif()
+
+    # DLSS 5 Neural Rendering is distributed as a separate NVIDIA-signed
+    # snippet and is not part of the public DLSS SDK repository. Supplying it
+    # is optional; SR/RR continue to build and run without it.
+    set(DLSSNR_DLL "" CACHE FILEPATH
+        "Path to the NVIDIA-signed nvngx_dlssnr.dll runtime")
+    if (DLSSNR_DLL)
+        if (NOT EXISTS "${DLSSNR_DLL}")
+            message(FATAL_ERROR "DLSSNR_DLL does not exist: '${DLSSNR_DLL}'")
+        endif()
+
+        add_custom_command(TARGET UnityDLSS POST_BUILD
+            COMMAND ${CMAKE_COMMAND} -E copy_if_different
+                "${DLSSNR_DLL}"
+                "$<TARGET_FILE_DIR:UnityDLSS>/nvngx_dlssnr.dll"
+            COMMENT "Copying optional DLSS 5 Neural Rendering runtime")
+        message(STATUS "DLSS 5 Neural Rendering runtime: ${DLSSNR_DLL}")
+    else()
+        message(STATUS
+            "DLSS 5 Neural Rendering runtime not configured; "
+            "set DLSSNR_DLL to enable deployment")
     endif()
 endif ()
 

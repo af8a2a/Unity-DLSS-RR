@@ -1,5 +1,43 @@
 This directory contains the C# wrappers used by VividRP.
 
+## DLSS 5 Neural Rendering
+
+`DLSSNeuralRendering` wraps the standalone feature-18 post-process exposed by
+`nvngx_dlssnr.dll`. Unlike Ray Reconstruction, it consumes only rasterized
+color, raw device depth, and motion vectors. The output must be a distinct
+`RenderTexture` created with `enableRandomWrite = true`.
+
+```csharp
+var neuralRendering = new DLSSNeuralRendering();
+var settings = new DLSSNeuralRenderingSettings
+{
+    Preset = DLSSNeuralRenderingPreset.Default,
+    Style = DLSSNeuralRenderingStyle.Natural,
+    DepthInverted = SystemInfo.usesReversedZBuffer,
+    Upscaling = false
+};
+
+bool queued = neuralRendering.Render(
+    cmd,
+    colorInput,
+    colorOutput,
+    rawDeviceDepth,
+    motionVectors,
+    DLSSMotionVectorEncoding.VividNormalizedUV,
+    settings,
+    resetHistory);
+```
+
+With `Upscaling = false`, input and output dimensions must match. With
+`Upscaling = true`, the runtime's fixed 2x path requires the output to be
+exactly twice the input width and height. Creation is asynchronous; `Render`
+records a blit fallback and returns `false` until the feature is ready.
+
+`DLSSExtension.IsNRSupported` means that the signed runtime loaded and
+initialized. Feature creation may still fail if the GPU or driver does not
+support Neural Rendering; inspect `NeuralRenderingInitResult` and
+`NeuralRenderingLastCreateResult` for the raw NGX result.
+
 ## Jitter and motion-vector contract
 
 The public SR/RR wrappers take explicit coordinate descriptions instead of raw

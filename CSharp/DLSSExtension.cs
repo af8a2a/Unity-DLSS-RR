@@ -69,7 +69,8 @@ namespace UnityEngine.Rendering.Universal
     public enum NVSDK_NGX_Feature : int
     {
         NVSDK_NGX_Feature_SuperSampling = 1,        // DLSS-SR
-        NVSDK_NGX_Feature_RayReconstruction = 13    // DLSS-RR
+        NVSDK_NGX_Feature_RayReconstruction = 13,   // DLSS-RR
+        NVSDK_NGX_Feature_NeuralRendering = 18      // DLSS 5 Neural Rendering
     }
 
     /// <summary>
@@ -155,6 +156,8 @@ namespace UnityEngine.Rendering.Universal
         private const int EVENT_ID_EVALUATE_SUPER_RESOLUTION = 1;
         private const int EVENT_ID_DESTROY_FEATURE = 2;
         private const int EVENT_ID_EVALUATE_RAY_RECONSTRUCTION = 3;
+        private const int EVENT_ID_CREATE_NEURAL_RENDERING = 4;
+        private const int EVENT_ID_EVALUATE_NEURAL_RENDERING = 5;
 
         #endregion
 
@@ -346,6 +349,43 @@ namespace UnityEngine.Rendering.Universal
             public float frameTimeDeltaMs;
         }
 
+        [StructLayout(LayoutKind.Sequential, Pack = 4)]
+        private struct DLSSNeuralRenderingCreateParams
+        {
+            public int handle;
+            public uint inputWidth;
+            public uint inputHeight;
+            public uint outputWidth;
+            public uint outputHeight;
+            public int preset;
+            public int upscaling;
+        }
+
+        [StructLayout(LayoutKind.Sequential, Pack = 8)]
+        private struct DLSSNeuralRenderingEvaluateParams
+        {
+            public int handle;
+            public IntPtr color;
+            public IntPtr output;
+            public IntPtr depth;
+            public IntPtr motionVectors;
+            public uint inputWidth;
+            public uint inputHeight;
+            public uint outputWidth;
+            public uint outputHeight;
+            public float motionVectorScaleX;
+            public float motionVectorScaleY;
+            public float intensity;
+            public float localToneStrength;
+            public float localStructureStrength;
+            public float skinStructureStrength;
+            public int depthInverted;
+            public int reset;
+            public int useAutoMask;
+            public int uiCorrection;
+            public int style;
+        }
+
         [StructLayout(LayoutKind.Sequential)]
         private struct DLSSDestroyFeatureParams
         {
@@ -377,6 +417,21 @@ namespace UnityEngine.Rendering.Universal
         private static extern DLSSFeatureStatus DLSS_GetFeatureHandleStatus(
             int handle,
             out int createResult);
+
+        [DllImport(DLL_NAME, CallingConvention = CALLING_CONVENTION)]
+        private static extern int DLSS_AllocateNeuralRenderingHandle();
+
+        [DllImport(DLL_NAME, CallingConvention = CALLING_CONVENTION)]
+        private static extern int DLSS_IsNeuralRenderingAvailable();
+
+        [DllImport(DLL_NAME, CallingConvention = CALLING_CONVENTION)]
+        private static extern int DLSS_GetNeuralRenderingInitResult();
+
+        [DllImport(DLL_NAME, CallingConvention = CALLING_CONVENTION)]
+        private static extern int DLSS_GetNeuralRenderingLastCreateResult();
+
+        [DllImport(DLL_NAME, CallingConvention = CALLING_CONVENTION)]
+        private static extern int DLSS_GetNeuralRenderingLastEvaluateResult();
 
         [DllImport(DLL_NAME, CallingConvention = CALLING_CONVENTION)]
         private static extern IntPtr DLSS_AllocateEventData(uint size);
@@ -438,6 +493,7 @@ namespace UnityEngine.Rendering.Universal
         private bool m_Initialized = false;
         private bool m_SRSupported = false;
         private bool m_RRSupported = false;
+        private bool m_NRSupported = false;
 
         #endregion
 
@@ -483,6 +539,51 @@ namespace UnityEngine.Rendering.Universal
         /// Check if DLSS-RR (Ray Reconstruction) is supported.
         /// </summary>
         public bool IsRRSupported => m_RRSupported;
+
+        /// <summary>
+        /// Check if the standalone DLSS 5 Neural Rendering runtime initialized.
+        /// Feature creation can still fail on an unsupported GPU or driver.
+        /// </summary>
+        public bool IsNRSupported => m_NRSupported;
+
+        /// <summary>Raw NGX result from nvngx_dlssnr.dll initialization.</summary>
+        public NVSDK_NGX_Result NeuralRenderingInitResult
+        {
+            get
+            {
+#if DLSS_PLUGIN_INTEGRATE
+                return (NVSDK_NGX_Result)DLSS_GetNeuralRenderingInitResult();
+#else
+                return NVSDK_NGX_Result.NVSDK_NGX_Result_FAIL_NotInitialized;
+#endif
+            }
+        }
+
+        /// <summary>Most recent feature-18 creation result.</summary>
+        public NVSDK_NGX_Result NeuralRenderingLastCreateResult
+        {
+            get
+            {
+#if DLSS_PLUGIN_INTEGRATE
+                return (NVSDK_NGX_Result)DLSS_GetNeuralRenderingLastCreateResult();
+#else
+                return NVSDK_NGX_Result.NVSDK_NGX_Result_FAIL_NotInitialized;
+#endif
+            }
+        }
+
+        /// <summary>Most recent feature-18 evaluation result.</summary>
+        public NVSDK_NGX_Result NeuralRenderingLastEvaluateResult
+        {
+            get
+            {
+#if DLSS_PLUGIN_INTEGRATE
+                return (NVSDK_NGX_Result)DLSS_GetNeuralRenderingLastEvaluateResult();
+#else
+                return NVSDK_NGX_Result.NVSDK_NGX_Result_FAIL_NotInitialized;
+#endif
+            }
+        }
 
         #endregion
 
@@ -534,9 +635,17 @@ namespace UnityEngine.Rendering.Universal
 
                 // Query capabilities
                 QueryFeatureAvailability();
+                m_NRSupported = DLSS_IsNeuralRenderingAvailable() != 0;
 
                 Debug.Log($"[DLSSExtension] DLSS-SR Available: {m_SRSupported}");
                 Debug.Log($"[DLSSExtension] DLSS-RR Available: {m_RRSupported}");
+                Debug.Log($"[DLSSExtension] DLSS 5 Neural Rendering Available: {m_NRSupported}");
+                if (!m_NRSupported)
+                {
+                    Debug.Log(
+                        $"[DLSSExtension] DLSS-NR init result: " +
+                        $"{(NVSDK_NGX_Result)DLSS_GetNeuralRenderingInitResult()}");
+                }
                 Debug.Log("[DLSSExtension] DLSS initialized successfully!");
 
                 // Cache instance
@@ -561,8 +670,8 @@ namespace UnityEngine.Rendering.Universal
         public bool Support()
         {
 #if DLSS_PLUGIN_INTEGRATE
-            // Consider DLSS supported if either SR or RR is available
-            return m_Initialized && (m_SRSupported || m_RRSupported);
+            // The three features have independent runtime/hardware support.
+            return m_Initialized && (m_SRSupported || m_RRSupported || m_NRSupported);
 #else
             return false;
 #endif
@@ -578,6 +687,7 @@ namespace UnityEngine.Rendering.Universal
                 m_Initialized = false;
                 m_SRSupported = false;
                 m_RRSupported = false;
+                m_NRSupported = false;
                 s_Instance = null;
 
                 Debug.Log("[DLSSExtension] DLSS shutdown complete.");
@@ -658,6 +768,57 @@ namespace UnityEngine.Rendering.Universal
             {
                 // The event was never queued, so releasing the proxy is safe and
                 // also destroys the parameter object transferred above.
+                DLSS_FreeFeatureHandle(handle);
+                return DLSS_INVALID_FEATURE_HANDLE;
+            }
+
+            return handle;
+        }
+
+        /// <summary>
+        /// Queue creation of a standalone DLSS 5 Neural Rendering feature.
+        /// Its NGX 0x15 parameter ABI is populated entirely by the native plugin.
+        /// </summary>
+        internal int CreateNeuralRenderingFeature(
+            CommandBuffer cmd,
+            uint inputWidth,
+            uint inputHeight,
+            uint outputWidth,
+            uint outputHeight,
+            DLSSNeuralRenderingPreset preset,
+            bool upscaling)
+        {
+            if (!m_Initialized || !m_NRSupported || cmd == null)
+            {
+                Debug.LogError(
+                    "[DLSSExtension] Cannot create DLSS-NR feature: invalid state or command buffer");
+                return DLSS_INVALID_FEATURE_HANDLE;
+            }
+
+            int handle = DLSS_AllocateNeuralRenderingHandle();
+            if (handle == DLSS_INVALID_FEATURE_HANDLE)
+            {
+                Debug.LogError("[DLSSExtension] Failed to allocate DLSS-NR feature handle");
+                return DLSS_INVALID_FEATURE_HANDLE;
+            }
+
+            var createParams = new DLSSNeuralRenderingCreateParams
+            {
+                handle = handle,
+                inputWidth = inputWidth,
+                inputHeight = inputHeight,
+                outputWidth = outputWidth,
+                outputHeight = outputHeight,
+                preset = (int)preset,
+                upscaling = upscaling ? 1 : 0
+            };
+
+            if (!IssuePluginEvent(
+                    cmd,
+                    EVENT_ID_CREATE_NEURAL_RENDERING,
+                    createParams,
+                    "CreateNeuralRendering"))
+            {
                 DLSS_FreeFeatureHandle(handle);
                 return DLSS_INVALID_FEATURE_HANDLE;
             }
@@ -810,6 +971,55 @@ namespace UnityEngine.Rendering.Universal
                 EVENT_ID_EVALUATE_RAY_RECONSTRUCTION,
                 evaluateParams,
                 "EvaluateRayReconstruction");
+        }
+
+        /// <summary>
+        /// Queue a standalone DLSS 5 Neural Rendering evaluation snapshot.
+        /// The four textures must be created, color/output must be distinct,
+        /// and motion-vector scale converts the supplied texture to
+        /// current-to-previous input pixels.
+        /// </summary>
+        internal bool EvaluateNeuralRenderingFeature(
+            CommandBuffer cmd,
+            int handle,
+            RenderTexture colorInput,
+            RenderTexture colorOutput,
+            RenderTexture depth,
+            RenderTexture motionVectors,
+            float motionVectorScaleX,
+            float motionVectorScaleY,
+            DLSSNeuralRenderingSettings settings,
+            bool reset)
+        {
+            var evaluateParams = new DLSSNeuralRenderingEvaluateParams
+            {
+                handle = handle,
+                color = GetNativeTexturePtr(colorInput),
+                output = GetNativeTexturePtr(colorOutput),
+                depth = GetNativeTexturePtr(depth),
+                motionVectors = GetNativeTexturePtr(motionVectors),
+                inputWidth = (uint)colorInput.width,
+                inputHeight = (uint)colorInput.height,
+                outputWidth = (uint)colorOutput.width,
+                outputHeight = (uint)colorOutput.height,
+                motionVectorScaleX = motionVectorScaleX,
+                motionVectorScaleY = motionVectorScaleY,
+                intensity = settings.Intensity,
+                localToneStrength = settings.LocalToneStrength,
+                localStructureStrength = settings.LocalStructureStrength,
+                skinStructureStrength = settings.SkinStructureStrength,
+                depthInverted = settings.DepthInverted ? 1 : 0,
+                reset = reset ? 1 : 0,
+                useAutoMask = settings.UseAutoMask ? 1 : 0,
+                uiCorrection = settings.UICorrection ? 1 : 0,
+                style = (int)settings.Style
+            };
+
+            return IssuePluginEvent(
+                cmd,
+                EVENT_ID_EVALUATE_NEURAL_RENDERING,
+                evaluateParams,
+                "EvaluateNeuralRendering");
         }
 
         /// <summary>

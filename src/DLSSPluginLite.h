@@ -56,7 +56,8 @@ typedef struct DLSSInitParams
 typedef enum DLSSNGXFeature
 {
     DLSS_NGX_Feature_SuperSampling = 1,         // DLSS-SR
-    DLSS_NGX_Feature_RayReconstruction = 13     // DLSS-RR
+    DLSS_NGX_Feature_RayReconstruction = 13,    // DLSS-RR
+    DLSS_NGX_Feature_NeuralRendering = 18       // DLSS 5 Neural Rendering
 } DLSSNGXFeature;
 
 //------------------------------------------------------------------------------
@@ -69,7 +70,9 @@ typedef enum DLSSRenderEventId
     DLSS_Event_CreateFeature = 0,
     DLSS_Event_EvaluateSuperResolution = 1,
     DLSS_Event_DestroyFeature = 2,
-    DLSS_Event_EvaluateRayReconstruction = 3
+    DLSS_Event_EvaluateRayReconstruction = 3,
+    DLSS_Event_CreateNeuralRendering = 4,
+    DLSS_Event_EvaluateNeuralRendering = 5
 } DLSSRenderEventId;
 
 /// State of an asynchronously created NGX feature.
@@ -145,12 +148,51 @@ typedef struct DLSSRayReconstructionEvaluateParams
     float frameTimeDeltaMs;
 } DLSSRayReconstructionEvaluateParams;
 
+/// Feature-creation payload for standalone DLSS 5 Neural Rendering.
+typedef struct DLSSNeuralRenderingCreateParams
+{
+    int handle;
+    unsigned int inputWidth;
+    unsigned int inputHeight;
+    unsigned int outputWidth;
+    unsigned int outputHeight;
+    int preset;
+    int upscaling;
+} DLSSNeuralRenderingCreateParams;
+
+/// Per-frame payload for standalone DLSS 5 Neural Rendering.
+typedef struct DLSSNeuralRenderingEvaluateParams
+{
+    int handle;
+    void* color;
+    void* output;
+    void* depth;
+    void* motionVectors;
+    unsigned int inputWidth;
+    unsigned int inputHeight;
+    unsigned int outputWidth;
+    unsigned int outputHeight;
+    float motionVectorScaleX;
+    float motionVectorScaleY;
+    float intensity;
+    float localToneStrength;
+    float localStructureStrength;
+    float skinStructureStrength;
+    int depthInverted;
+    int reset;
+    int useAutoMask;
+    int uiCorrection;
+    int style;
+} DLSSNeuralRenderingEvaluateParams;
+
 #ifdef __cplusplus
 static_assert(sizeof(DLSSMatrix4x4) == 16 * sizeof(float));
 static_assert(offsetof(DLSSRayReconstructionEvaluateParams, exposureTexture) ==
     sizeof(DLSSCommonEvaluateParams));
 static_assert(offsetof(DLSSRayReconstructionEvaluateParams, viewToClip) ==
     offsetof(DLSSRayReconstructionEvaluateParams, worldToView) + sizeof(DLSSMatrix4x4));
+static_assert(sizeof(DLSSNeuralRenderingCreateParams) == 28);
+static_assert(sizeof(DLSSNeuralRenderingEvaluateParams) == 104);
 #endif
 
 /// Parameters for destroy feature render event
@@ -264,6 +306,19 @@ int UNITY_INTERFACE_EXPORT UNITY_INTERFACE_API DLSS_FreeFeatureHandle(int handle
 int UNITY_INTERFACE_EXPORT UNITY_INTERFACE_API DLSS_GetFeatureHandleStatus(
     int handle,
     int* pCreateResult);
+
+/// Allocate a feature-18 proxy and its NGX parameter map.
+/// @return Handle ID, or DLSS_INVALID_FEATURE_HANDLE on failure.
+int UNITY_INTERFACE_EXPORT UNITY_INTERFACE_API DLSS_AllocateNeuralRenderingHandle(void);
+
+/// True when nvngx_dlssnr.dll loaded and initialized successfully.
+int UNITY_INTERFACE_EXPORT UNITY_INTERFACE_API DLSS_IsNeuralRenderingAvailable(void);
+
+/// Raw NGX results for diagnostics. Availability does not guarantee that
+/// feature creation is supported by the current GPU/driver.
+int UNITY_INTERFACE_EXPORT UNITY_INTERFACE_API DLSS_GetNeuralRenderingInitResult(void);
+int UNITY_INTERFACE_EXPORT UNITY_INTERFACE_API DLSS_GetNeuralRenderingLastCreateResult(void);
+int UNITY_INTERFACE_EXPORT UNITY_INTERFACE_API DLSS_GetNeuralRenderingLastEvaluateResult(void);
 
 //--- Event Payload Memory ---
 

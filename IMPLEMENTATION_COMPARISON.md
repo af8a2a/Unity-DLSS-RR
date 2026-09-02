@@ -1,10 +1,10 @@
-# Implementation Comparison: Unity-DLSS-RR vs UnityDenoiserPlugin
+# Implementation Comparison: Unity-DLSS vs UnityDenoiserPlugin
 
 ## Overview
 
 Comparing two approaches to integrating NVIDIA DLSS into Unity:
-- **Unity-DLSS-RR** (E:\Unity-DLSS-RR) - My implementation
-- **UnityDenoiserPlugin** (D:\UnityDenoiserPlugin) - Reference implementation
+- **Unity-DLSS** - My implementation
+- **[UnityDenoiserPlugin](https://github.com/guoxx/UnityDenoiserPlugin)** - Original reference repository
 
 ---
 
@@ -38,7 +38,7 @@ Philosophy: Direct NGX SDK exposure with minimal abstraction
 
 ---
 
-#### **Unity-DLSS-RR** - High-Level Structured API
+#### **Unity-DLSS** - High-Level Structured API
 ```
 Philosophy: Type-safe structured parameters with internal context management
 ```
@@ -93,7 +93,7 @@ DlssCSharpBinding.DLSS_FreeFeatureHandle(handle);
 
 ---
 
-#### Unity-DLSS-RR
+#### Unity-DLSS
 ```cpp
 // C++ - Managed context with viewId
 class DLSSContextManager {
@@ -114,7 +114,7 @@ DLSSManager.DestroyContext(viewId);
 
 **Approach:** Plugin owns contexts, viewId mapping, automatic cleanup
 
-**Winner:** **Unity-DLSS-RR** for safety and simplicity, **UnityDenoiserPlugin** for flexibility
+**Winner:** **Unity-DLSS** for safety and simplicity, **UnityDenoiserPlugin** for flexibility
 
 ---
 
@@ -141,7 +141,7 @@ DLSS_Parameter_GetUI(capParams, "SuperSampling.Available", out uint available);
 
 ---
 
-#### Unity-DLSS-RR
+#### Unity-DLSS
 ```csharp
 // C# - Structured parameters
 var createParams = new DLSSContextCreateParams {
@@ -166,7 +166,7 @@ var executeParams = new DLSSExecuteParams {
 };
 ```
 
-**Winner:** **Unity-DLSS-RR** for safety, **UnityDenoiserPlugin** for maximum control
+**Winner:** **Unity-DLSS** for safety, **UnityDenoiserPlugin** for maximum control
 
 ---
 
@@ -199,7 +199,7 @@ void ExecuteCommandList(CommandListChunk& cmdlist, ...) {
 
 ---
 
-#### Unity-DLSS-RR
+#### Unity-DLSS
 ```cpp
 // Temporary command list creation
 Microsoft::WRL::ComPtr<ID3D12CommandAllocator> cmdAllocator;
@@ -218,7 +218,7 @@ cmdList->Close();
 
 **Winner:** **UnityDenoiserPlugin** - more efficient with pooling
 
-**Issue in Unity-DLSS-RR:** Should use Unity's command queue for execution instead of creating orphaned command lists
+**Issue in Unity-DLSS:** Should use Unity's command queue for execution instead of creating orphaned command lists
 
 ---
 
@@ -257,7 +257,7 @@ void OnDLSSRenderEvent(int eventId, void* data) {
 
 ---
 
-#### Unity-DLSS-RR
+#### Unity-DLSS
 ```csharp
 // Direct function calls
 [DllImport("UnityDLSS")]
@@ -274,13 +274,13 @@ DLSSManager.Execute(viewId, executeParams);
 
 **Winner:** **UnityDenoiserPlugin** - better GPU sync with render events
 
-**Issue in Unity-DLSS-RR:** Should use render events for proper GPU timeline integration
+**Issue in Unity-DLSS:** Should use render events for proper GPU timeline integration
 
 ---
 
 ### 6. Unity API Version
 
-| Feature | UnityDenoiserPlugin | Unity-DLSS-RR |
+| Feature | UnityDenoiserPlugin | Unity-DLSS |
 |---------|---------------------|---------------|
 | D3D12 Interface | `IUnityGraphicsD3D12v7` | `IUnityGraphicsD3D12v8` |
 | Reason | Wider compatibility | Latest features |
@@ -322,7 +322,7 @@ void DLSSLogCallback(const char* message,
 
 ---
 
-#### Unity-DLSS-RR
+#### Unity-DLSS
 ```cpp
 DLSSResult TranslateNGXResult(int ngxResult) {
     switch (ngxResult) {
@@ -350,7 +350,7 @@ class DLSSLogger {
 
 **Logging:** Comprehensive error translation with actionable suggestions, optional callback override
 
-**Winner:** **Unity-DLSS-RR** - more detailed error guidance
+**Winner:** **Unity-DLSS** - more detailed error guidance
 
 ---
 
@@ -364,7 +364,7 @@ class DLSSLogger {
 
 ---
 
-#### Unity-DLSS-RR
+#### Unity-DLSS
 ```cpp
 // Explicit validation before NGX call
 bool hasError = false;
@@ -380,7 +380,7 @@ if (hasError) {
 }
 ```
 
-**Winner:** **Unity-DLSS-RR** - early error detection with clear messages
+**Winner:** **Unity-DLSS** - early error detection with clear messages
 
 ---
 
@@ -404,7 +404,7 @@ add_custom_command(TARGET ${target_name} POST_BUILD
 
 ---
 
-#### Unity-DLSS-RR
+#### Unity-DLSS
 ```cmake
 target_link_libraries(UnityDLSS PRIVATE
     $<$<CONFIG:Debug>:${NGX_LIB_PATH_DEBUG}>
@@ -429,7 +429,7 @@ endforeach()
 
 ## Key Architectural Differences Summary
 
-| Aspect | UnityDenoiserPlugin | Unity-DLSS-RR |
+| Aspect | UnityDenoiserPlugin | Unity-DLSS |
 |--------|---------------------|---------------|
 | **Abstraction Level** | Low (NGX wrapper) | High (Opinionated API) |
 | **Parameter Passing** | String-based dict | Structured C structs |
@@ -444,7 +444,7 @@ endforeach()
 
 ---
 
-## Critical Issues in Unity-DLSS-RR
+## Critical Issues in Unity-DLSS
 
 ### 1. **Command List Execution (CRITICAL)**
 ```cpp
@@ -484,7 +484,7 @@ Creating temporary command lists per operation is inefficient. Should implement 
 
 ## Recommendations
 
-### For Unity-DLSS-RR Improvements:
+### For Unity-DLSS Improvements:
 
 1. **HIGH PRIORITY: Fix command list execution**
    - Use `IUnityGraphicsD3D12v8::GetCommandQueue()`
@@ -528,16 +528,16 @@ Creating temporary command lists per operation is inefficient. Should implement 
 - Maximum NGX SDK flexibility
 - Closer to official NVIDIA patterns
 
-**Unity-DLSS-RR Strengths:**
+**Unity-DLSS Strengths:**
 - Superior developer experience (type-safe, simple)
 - Better error handling and validation
 - Cleaner C# integration
 - More maintainable for common use cases
 
 **Ideal Solution:** Hybrid approach
-- Keep Unity-DLSS-RR's high-level structured API as primary interface
+- Keep Unity-DLSS's high-level structured API as primary interface
 - Fix critical GPU execution issues
 - Add render event support
 - Optionally expose low-level NGX access for advanced scenarios
 
-The two implementations represent different design philosophies - both valid depending on use case. UnityDenoiserPlugin prioritizes flexibility and control, while Unity-DLSS-RR prioritizes safety and simplicity.
+The two implementations represent different design philosophies - both valid depending on use case. UnityDenoiserPlugin prioritizes flexibility and control, while Unity-DLSS prioritizes safety and simplicity.

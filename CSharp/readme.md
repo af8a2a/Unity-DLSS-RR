@@ -1,4 +1,6 @@
-This directory contains the C# wrappers used by VividRP.
+# Unity-DLSS C# Integration
+
+This directory contains the Unity-DLSS C# wrappers used by VividRP.
 
 ## DLSS 5 Neural Rendering
 

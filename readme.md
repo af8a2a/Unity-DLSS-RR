@@ -1,7 +1,7 @@
-# Unity Native Plugin with DLSS Support
+# Unity-DLSS
 
-Unity native plugin with NVIDIA DLSS Super Resolution, Ray Reconstruction,
-and optional DLSS 5 Neural Rendering support.
+Unity-DLSS is a Unity native plugin with NVIDIA DLSS Super Resolution, Ray
+Reconstruction, and optional DLSS 5 Neural Rendering support.
 
 ## DLSS Integration
 

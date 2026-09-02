@@ -1,6 +1,8 @@
-# DLSS Unity Integration Guide
+# Unity-DLSS Integration Guide
 
-This guide explains how to integrate the DLSS native plugin into your Unity project, supporting both **DLSS-SR** (Super Resolution) and **DLSS-RR** (Ray Reconstruction).
+This guide explains how to integrate Unity-DLSS into your Unity project. The
+plugin supports **DLSS-SR** (Super Resolution), **DLSS-RR** (Ray
+Reconstruction), and optional **DLSS 5 Neural Rendering**.
 
 ---
 
@@ -34,10 +36,11 @@ This guide explains how to integrate the DLSS native plugin into your Unity proj
 Copy the following files to your Unity project's `Assets/Plugins/x86_64/` folder:
 
 ```
-UnityPlugin.dll      # Main plugin
+UnityDLSS.dll        # Main plugin
 nvngx_dlss.dll       # DLSS-SR runtime
 nvngx_dlssd.dll      # DLSS-RR runtime
 nvngx_dlssg.dll      # DLSS Frame Generation (optional)
+nvngx_dlssnr.dll     # DLSS 5 Neural Rendering runtime (optional)
 ```
 
 ### 2. Copy C# Wrapper

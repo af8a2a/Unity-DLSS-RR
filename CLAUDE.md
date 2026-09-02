@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Overview
 
-Unity Native Plugin (C++ DLL) providing NVIDIA DLSS integration for Unity. Supports DLSS Super Resolution, Ray Reconstruction, and optional DLSS 5 Neural Rendering via the NGX SDK.
+Unity-DLSS is a native C++ plugin providing NVIDIA DLSS integration for Unity. It supports DLSS Super Resolution, Ray Reconstruction, and optional DLSS 5 Neural Rendering via the NGX SDK.
 
 ## Build Commands
 
@@ -19,7 +19,7 @@ cmake ..
 cmake --build .
 ```
 
-Output: `build/bin/UnityPlugin.dll` with DLSS DLLs copied alongside.
+Output: `build/bin/UnityDLSS.dll` with DLSS DLLs copied alongside.
 
 ## Build Configuration
 
